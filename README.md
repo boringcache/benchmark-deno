@@ -5,7 +5,11 @@ Reproducible Linux x86 release-build proof for
 GitHub Actions `target/` archive strategy with BoringCache's managed remote
 Rust compiler cache.
 
-The first completed proof and the dated prospect assessment are in
+Stable proof runs pin `boringcache/one` `v1.14.0` by immutable commit and keep
+Rust installation in the host workflow. Canary runs require an exact immutable
+CLI tag.
+
+The completed proof and the dated prospect assessment are in
 [`RESULTS.md`](RESULTS.md) and [`PROSPECT.md`](PROSPECT.md).
 
 ## The question
@@ -62,7 +66,8 @@ mode:
 2. Preserve Cargo registry state, but do not archive `target/`. This pinned
    Deno pair has no Cargo git dependencies, so the candidate does not configure
    an entry for a path Cargo never creates.
-3. On a fresh runner, restore the same run-scoped cache read-only.
+3. On a fresh runner, restore the same run-scoped cache with
+   `trust-policy=restore`.
 4. Build the head commit and capture `sccache --show-stats`.
 
 Both strategies use Rust 1.95.0, Deno's `v2.x` snapshot-minifier runtime, and
@@ -75,9 +80,6 @@ The repository needs these Actions secrets:
 
 - `BORINGCACHE_RESTORE_TOKEN`
 - `BORINGCACHE_SAVE_TOKEN`
-
-`BORINGCACHE_API_TOKEN` remains a supported fallback for an existing combined
-token setup.
 
 Run **Deno Rust cache proof** from the Actions tab. The optional `cli_version`
 input can pin a canary CLI release. The two strategies run in parallel and the
