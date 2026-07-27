@@ -52,7 +52,8 @@ The target archive uses the same exclusions as Deno's workflow.
 
 ### BoringCache candidate
 
-The candidate uses `boringcache/one@v1` in `rust-sccache` proxy mode:
+The candidate uses an immutable `boringcache/one` release in `sccache` proxy
+mode:
 
 1. Build the base commit with an empty, run-scoped remote compiler cache.
 2. Preserve Cargo dependency state, but do not archive `target/`.

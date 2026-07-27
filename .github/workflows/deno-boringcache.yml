@@ -53,6 +53,9 @@ jobs:
       - name: Prepare base source
         run: ./scripts/prepare-source.sh base
 
+      - name: Scope cache tags to this proof run
+        run: ./scripts/scope-boringcache-run.sh "r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
+
       - name: Free runner disk space
         run: ./scripts/free-runner-disk.sh
 
@@ -62,22 +65,22 @@ jobs:
 
       - name: Configure BoringCache Rust compiler cache
         id: cache
-        uses: boringcache/one@v1
+        uses: boringcache/one@9721d419d2c78c0780963d297eb3f81f24641a27 # v1.13.106
         with:
           setup: mise
-          cli-version: ${{ inputs.cli_version }}
-          mode: rust-sccache
-          workspace: ${{ env.BENCHMARK_WORKSPACE }}
-          working-directory: ./upstream
-          cache-tag: deno-release-r${{ github.run_id }}-a${{ github.run_attempt }}
-          cache-runtime: false
-          cache-cargo: true
-          cache-target: false
+          cli-version: ${{ inputs.cli_version || 'v1.13.106' }}
+          mode: sccache
+          working-directory: .
+          cache-profiles: cargo
           tools: rust@${{ steps.source.outputs.DENO_RUST_VERSION }}
-          sccache: true
-          sccache-mode: proxy
-          sccache-version: 0.14.0
+          sccache-version: 0.16.0
           proxy-port: 5000
+          verify: wait
+          diagnostics: verbose
+          metadata-hints: |
+            benchmark=deno-release-rust-cache
+            phase=base
+          fail-on-cache-error: true
           verbose: true
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
@@ -90,16 +93,16 @@ jobs:
       - name: Capture cache tags
         id: tags
         run: |
-          tags=()
-          for tag in \
-            "${{ steps.cache.outputs.cargo-tag }}" \
-            "${{ steps.cache.outputs.cargo-git-tag }}" \
-            "${{ steps.cache.outputs.sccache-tag }}"; do
-            [[ -n "$tag" ]] && tags+=("$tag")
+          resolved_tags="${{ steps.cache.outputs.resolved-tags }}"
+          [[ -n "$resolved_tags" ]] || { echo "BoringCache did not resolve cache tags" >&2; exit 1; }
+          sccache_tag=""
+          IFS=',' read -r -a tags <<< "$resolved_tags"
+          for tag in "${tags[@]}"; do
+            [[ "$tag" == deno-release-rust-cache-* ]] && sccache_tag="$tag"
           done
-          tags_csv="$(IFS=,; echo "${tags[*]}")"
-          echo "tags_csv=${tags_csv}" >> "$GITHUB_OUTPUT"
-          echo "sccache_tag=${{ steps.cache.outputs.sccache-tag }}" >> "$GITHUB_OUTPUT"
+          [[ -n "$sccache_tag" ]] || { echo "Could not identify the exact sccache tag in: $resolved_tags" >&2; exit 1; }
+          echo "tags_csv=${resolved_tags}" >> "$GITHUB_OUTPUT"
+          echo "sccache_tag=${sccache_tag}" >> "$GITHUB_OUTPUT"
 
       - name: Configure Deno release environment
         run: ./scripts/setup-deno-release.sh
@@ -125,7 +128,7 @@ jobs:
             --restore-seconds "${{ steps.cache_timing.outputs.seconds }}" \
             --build-seconds "${{ steps.build.outputs.seconds }}" \
             --end-to-end-seconds "$end_to_end" \
-            --cache-key "${{ steps.cache.outputs.sccache-tag }}" \
+            --cache-key "${{ steps.tags.outputs.sccache_tag }}" \
             --cache-import-status cold \
             --sccache-stats-file /tmp/deno-base-sccache-stats.txt
 
@@ -167,6 +170,9 @@ jobs:
       - name: Prepare rolling source
         run: ./scripts/prepare-source.sh head
 
+      - name: Scope cache tags to this proof run
+        run: ./scripts/scope-boringcache-run.sh "r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
+
       - name: Free runner disk space
         run: ./scripts/free-runner-disk.sh
 
@@ -176,24 +182,24 @@ jobs:
 
       - name: Restore BoringCache Rust compiler cache
         id: cache
-        uses: boringcache/one@v1
+        uses: boringcache/one@9721d419d2c78c0780963d297eb3f81f24641a27 # v1.13.106
         with:
           setup: mise
-          cli-version: ${{ inputs.cli_version }}
-          mode: rust-sccache
-          workspace: ${{ env.BENCHMARK_WORKSPACE }}
-          working-directory: ./upstream
-          cache-tag: deno-release-r${{ github.run_id }}-a${{ github.run_attempt }}
-          cache-runtime: false
-          cache-cargo: true
-          cache-target: false
+          cli-version: ${{ inputs.cli_version || 'v1.13.106' }}
+          mode: sccache
+          working-directory: .
+          cache-profiles: cargo
           tools: rust@${{ steps.source.outputs.DENO_RUST_VERSION }}
-          sccache: true
-          sccache-mode: proxy
           read-only: true
           save-policy: off
-          sccache-version: 0.14.0
+          sccache-version: 0.16.0
           proxy-port: 5000
+          verify: check
+          diagnostics: verbose
+          metadata-hints: |
+            benchmark=deno-release-rust-cache
+            phase=rolling
+          fail-on-cache-error: true
           verbose: true
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
@@ -257,7 +263,7 @@ jobs:
             --build-seconds "${{ steps.build.outputs.seconds }}" \
             --end-to-end-seconds "$end_to_end" \
             --cache-storage-bytes "${{ steps.cache_size.outputs.bytes }}" \
-            --cache-key "${{ steps.cache.outputs.sccache-tag }}" \
+            --cache-key "${{ needs.seed-base.outputs.sccache_tag }}" \
             --cache-import-status ok \
             --sccache-stats-file /tmp/deno-rolling-sccache-stats.txt
 

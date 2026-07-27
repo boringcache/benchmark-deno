@@ -5,3 +5,16 @@ workspace = "boringcache/benchmark-deno"
 # proxy without archiving target/, so the rolling result isolates compiler
 # artifact reuse from whole-directory target restoration.
 
+[entries.cargo-registry]
+tag = "deno-cargo-registry-local"
+
+[entries.cargo-git]
+tag = "deno-cargo-git-local"
+
+[profiles.cargo]
+entries = ["cargo-registry", "cargo-git"]
+
+[adapters.sccache]
+tag = "deno-release-rust-cache-local"
+command = ["./scripts/run-deno-release-build.sh"]
+no-git = true
