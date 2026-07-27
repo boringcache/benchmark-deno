@@ -1,0 +1,59 @@
+name: "Deno Rust cache proof"
+run-name: ${{ inputs.cli_version == '' && 'Deno release cache proof' || format('Deno release cache proof | CLI {0}', inputs.cli_version) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      cli_version:
+        description: Optional BoringCache CLI release tag for a canary run.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  actions-cache:
+    name: Actions cache baseline
+    uses: ./.github/workflows/deno-actions-cache.yml
+    secrets: inherit
+
+  boringcache:
+    name: BoringCache candidate
+    uses: ./.github/workflows/deno-boringcache.yml
+    with:
+      cli_version: ${{ inputs.cli_version }}
+    secrets: inherit
+
+  compare:
+    name: Compare results
+    needs: [actions-cache, boringcache]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout benchmark repository
+        uses: actions/checkout@v6
+
+      - name: Download phase results
+        uses: actions/download-artifact@v8
+        with:
+          pattern: phase-deno-release-rust-cache-*
+          path: benchmark-phases
+          merge-multiple: true
+
+      - name: Render comparison
+        run: |
+          ./scripts/render_comparison.py \
+            --input-dir benchmark-phases \
+            --output-dir benchmark-results
+
+      - name: Publish job summary
+        run: cat benchmark-results/comparison.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload comparison
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-deno-release-rust-cache-comparison
+          path: benchmark-results
+          if-no-files-found: error

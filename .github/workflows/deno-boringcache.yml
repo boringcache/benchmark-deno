@@ -1,0 +1,269 @@
+name: "Deno release proof - BoringCache"
+
+on:
+  workflow_call:
+    inputs:
+      cli_version:
+        description: Optional BoringCache CLI release tag for canary runs.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  BENCHMARK_ID: deno-release-rust-cache
+  BENCHMARK_WORKSPACE: ${{ github.repository }}
+
+jobs:
+  seed-base:
+    name: Base build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    outputs:
+      tags_csv: ${{ steps.tags.outputs.tags_csv }}
+      sccache_tag: ${{ steps.tags.outputs.sccache_tag }}
+    steps:
+      - name: Validate BoringCache secrets
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+        run: |
+          [[ -n "$BORINGCACHE_RESTORE_TOKEN" ]] || { echo "Missing BoringCache restore token" >&2; exit 1; }
+          [[ -n "$BORINGCACHE_SAVE_TOKEN" ]] || { echo "Missing BoringCache save token" >&2; exit 1; }
+
+      - name: Checkout benchmark repository
+        uses: actions/checkout@v6
+
+      - name: Read pinned source
+        id: source
+        run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pinned Deno source
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
+          ref: ${{ steps.source.outputs.DENO_HEAD_SHA }}
+          path: upstream
+          fetch-depth: 2
+          submodules: false
+
+      - name: Prepare base source
+        run: ./scripts/prepare-source.sh base
+
+      - name: Free runner disk space
+        run: ./scripts/free-runner-disk.sh
+
+      - name: Start cache setup timing
+        id: cache_start
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure BoringCache Rust compiler cache
+        id: cache
+        uses: boringcache/one@v1
+        with:
+          setup: mise
+          cli-version: ${{ inputs.cli_version }}
+          mode: rust-sccache
+          workspace: ${{ env.BENCHMARK_WORKSPACE }}
+          working-directory: ./upstream
+          cache-tag: deno-release-r${{ github.run_id }}-a${{ github.run_attempt }}
+          cache-runtime: false
+          cache-cargo: true
+          cache-target: false
+          tools: rust@${{ steps.source.outputs.DENO_RUST_VERSION }}
+          sccache: true
+          sccache-mode: proxy
+          sccache-version: 0.14.0
+          proxy-port: 5000
+          verbose: true
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+
+      - name: Capture cache setup timing
+        id: cache_timing
+        run: echo "seconds=$(( $(date +%s) - ${{ steps.cache_start.outputs.started_at }} ))" >> "$GITHUB_OUTPUT"
+
+      - name: Capture cache tags
+        id: tags
+        run: |
+          tags=()
+          for tag in \
+            "${{ steps.cache.outputs.cargo-tag }}" \
+            "${{ steps.cache.outputs.cargo-git-tag }}" \
+            "${{ steps.cache.outputs.sccache-tag }}"; do
+            [[ -n "$tag" ]] && tags+=("$tag")
+          done
+          tags_csv="$(IFS=,; echo "${tags[*]}")"
+          echo "tags_csv=${tags_csv}" >> "$GITHUB_OUTPUT"
+          echo "sccache_tag=${{ steps.cache.outputs.sccache-tag }}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Deno release environment
+        run: ./scripts/setup-deno-release.sh
+
+      - name: Build pinned base commit
+        id: build
+        run: |
+          sccache --zero-stats >/dev/null 2>&1 || true
+          started_at="$(date +%s)"
+          ./scripts/run-deno-release-build.sh
+          finished_at="$(date +%s)"
+          seconds="$((finished_at - started_at))"
+          echo "seconds=${seconds}" >> "$GITHUB_OUTPUT"
+          sccache --show-stats | tee /tmp/deno-base-sccache-stats.txt
+
+      - name: Write base result
+        run: |
+          end_to_end="$(( ${{ steps.cache_timing.outputs.seconds }} + ${{ steps.build.outputs.seconds }} ))"
+          ./scripts/write_phase_result.py \
+            --strategy boringcache \
+            --phase base \
+            --source-sha "${{ steps.source.outputs.DENO_BASE_SHA }}" \
+            --restore-seconds "${{ steps.cache_timing.outputs.seconds }}" \
+            --build-seconds "${{ steps.build.outputs.seconds }}" \
+            --end-to-end-seconds "$end_to_end" \
+            --cache-key "${{ steps.cache.outputs.sccache-tag }}" \
+            --cache-import-status cold \
+            --sccache-stats-file /tmp/deno-base-sccache-stats.txt
+
+      - name: Upload base result
+        uses: actions/upload-artifact@v6
+        with:
+          name: phase-${{ env.BENCHMARK_ID }}-boringcache-base
+          path: benchmark-results/boringcache-base.json
+          if-no-files-found: error
+
+  rolling-head:
+    name: Rolling commit build
+    needs: seed-base
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Validate BoringCache restore secret
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+        run: |
+          [[ -n "$BORINGCACHE_RESTORE_TOKEN" ]] || { echo "Missing BoringCache restore token" >&2; exit 1; }
+
+      - name: Checkout benchmark repository
+        uses: actions/checkout@v6
+
+      - name: Read pinned source
+        id: source
+        run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pinned Deno source
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
+          ref: ${{ steps.source.outputs.DENO_HEAD_SHA }}
+          path: upstream
+          fetch-depth: 2
+          submodules: false
+
+      - name: Prepare rolling source
+        run: ./scripts/prepare-source.sh head
+
+      - name: Free runner disk space
+        run: ./scripts/free-runner-disk.sh
+
+      - name: Start cache setup timing
+        id: cache_start
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore BoringCache Rust compiler cache
+        id: cache
+        uses: boringcache/one@v1
+        with:
+          setup: mise
+          cli-version: ${{ inputs.cli_version }}
+          mode: rust-sccache
+          workspace: ${{ env.BENCHMARK_WORKSPACE }}
+          working-directory: ./upstream
+          cache-tag: deno-release-r${{ github.run_id }}-a${{ github.run_attempt }}
+          cache-runtime: false
+          cache-cargo: true
+          cache-target: false
+          tools: rust@${{ steps.source.outputs.DENO_RUST_VERSION }}
+          sccache: true
+          sccache-mode: proxy
+          read-only: true
+          save-policy: off
+          sccache-version: 0.14.0
+          proxy-port: 5000
+          verbose: true
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+
+      - name: Capture cache setup timing
+        id: cache_timing
+        run: echo "seconds=$(( $(date +%s) - ${{ steps.cache_start.outputs.started_at }} ))" >> "$GITHUB_OUTPUT"
+
+      - name: Measure BoringCache storage
+        id: cache_size
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+          BORINGCACHE_EXACT_TAGS: ${{ needs.seed-base.outputs.sccache_tag }}
+        run: |
+          bytes="$(./scripts/sum-boringcache-check-sizes.sh \
+            "$BENCHMARK_WORKSPACE" \
+            "${{ needs.seed-base.outputs.tags_csv }}")"
+          echo "bytes=${bytes}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Deno release environment
+        run: ./scripts/setup-deno-release.sh
+
+      - name: Build rolling commit
+        id: build
+        run: |
+          sccache --zero-stats >/dev/null 2>&1 || true
+          started_at="$(date +%s)"
+          ./scripts/run-deno-release-build.sh
+          finished_at="$(date +%s)"
+          seconds="$((finished_at - started_at))"
+          echo "seconds=${seconds}" >> "$GITHUB_OUTPUT"
+          sccache --show-stats | tee /tmp/deno-rolling-sccache-stats.txt
+
+      - name: Capture proxy diagnostics
+        if: always()
+        run: |
+          mkdir -p benchmark-diagnostics
+          curl -fsS "http://127.0.0.1:${{ steps.cache.outputs.proxy-port }}/_boringcache/status" \
+            -o benchmark-diagnostics/proxy-status.json || true
+          proxy_log="${{ steps.cache.outputs.proxy-log-path }}"
+          if [[ -n "$proxy_log" && -f "$proxy_log" ]]; then
+            cp "$proxy_log" benchmark-diagnostics/
+          fi
+
+      - name: Upload proxy diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: diagnostics-${{ env.BENCHMARK_ID }}-boringcache-rolling
+          path: benchmark-diagnostics
+          if-no-files-found: ignore
+
+      - name: Write rolling result
+        run: |
+          end_to_end="$(( ${{ steps.cache_timing.outputs.seconds }} + ${{ steps.build.outputs.seconds }} ))"
+          ./scripts/write_phase_result.py \
+            --strategy boringcache \
+            --phase rolling \
+            --source-sha "${{ steps.source.outputs.DENO_HEAD_SHA }}" \
+            --restore-seconds "${{ steps.cache_timing.outputs.seconds }}" \
+            --build-seconds "${{ steps.build.outputs.seconds }}" \
+            --end-to-end-seconds "$end_to_end" \
+            --cache-storage-bytes "${{ steps.cache_size.outputs.bytes }}" \
+            --cache-key "${{ steps.cache.outputs.sccache-tag }}" \
+            --cache-import-status ok \
+            --sccache-stats-file /tmp/deno-rolling-sccache-stats.txt
+
+      - name: Upload rolling result
+        uses: actions/upload-artifact@v6
+        with:
+          name: phase-${{ env.BENCHMARK_ID }}-boringcache-rolling
+          path: benchmark-results/boringcache-rolling.json
+          if-no-files-found: error

@@ -1,0 +1,7 @@
+workspace = "boringcache/benchmark-deno"
+
+# Deno's existing target archive is the comparison baseline. The BoringCache
+# lane intentionally restores Cargo state and uses the managed remote sccache
+# proxy without archiving target/, so the rolling result isolates compiler
+# artifact reuse from whole-directory target restoration.
+
