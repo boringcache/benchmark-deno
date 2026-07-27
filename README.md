@@ -56,7 +56,9 @@ The candidate uses an immutable `boringcache/one` release in `sccache` proxy
 mode:
 
 1. Build the base commit with an empty, run-scoped remote compiler cache.
-2. Preserve Cargo dependency state, but do not archive `target/`.
+2. Preserve Cargo registry state, but do not archive `target/`. This pinned
+   Deno pair has no Cargo git dependencies, so the candidate does not configure
+   an entry for a path Cargo never creates.
 3. On a fresh runner, restore the same run-scoped cache read-only.
 4. Build the head commit and capture `sccache --show-stats`.
 

@@ -8,11 +8,8 @@ workspace = "boringcache/benchmark-deno"
 [entries.cargo-registry]
 tag = "deno-cargo-registry-local"
 
-[entries.cargo-git]
-tag = "deno-cargo-git-local"
-
 [profiles.cargo]
-entries = ["cargo-registry", "cargo-git"]
+entries = ["cargo-registry"]
 
 [adapters.sccache]
 tag = "deno-release-rust-cache-local"
