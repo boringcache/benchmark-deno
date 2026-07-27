@@ -130,6 +130,10 @@ jobs:
             fi
             sleep 2
           done
+          if [[ ! "$bytes" =~ ^[0-9]+$ ]] || (( bytes == 0 )); then
+            echo "Actions cache storage was still unavailable after 30 seconds" >&2
+            exit 1
+          fi
           echo "bytes=${bytes}" >> "$GITHUB_OUTPUT"
 
       - name: Write base result

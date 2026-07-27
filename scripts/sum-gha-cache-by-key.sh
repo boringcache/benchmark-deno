@@ -29,7 +29,7 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 0
 fi
 
-if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+if [[ -z "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]; then
   echo "0"
   exit 0
 fi
@@ -67,17 +67,15 @@ fi
 
 # For non-Docker benchmarks: sum entries matching the key prefix (attributable).
 sum_for_query() {
-  local key_filter="$1"
+  local key_prefix="$1"
   local jq_filter="$2"
 
   local total=0
   local page=1
-  local key_encoded
-  key_encoded="$(jq -nr --arg v "$key_filter" '$v|@uri')"
 
   while true; do
     local response
-    response="$(gh api "/repos/${repo}/actions/caches?per_page=100&page=${page}&key=${key_encoded}" 2>/dev/null || true)"
+    response="$(gh api "/repos/${repo}/actions/caches?per_page=100&page=${page}" 2>/dev/null || true)"
     if [[ -z "$response" ]]; then
       break
     fi
@@ -88,6 +86,7 @@ sum_for_query() {
     local page_sum
     page_sum="$(
       jq -r \
+        --arg prefix "${key_prefix}" \
         --arg since "${window_started_at}" \
         --arg until "${window_ended_at}" \
         "$jq_filter" <<<"$response"
@@ -128,6 +127,7 @@ prefix_sum="$(
     "${timestamp_filter}
     [
       .actions_caches[]
+      | select(.key | startswith(\$prefix))
       | select(in_window(.last_accessed_at))
       | .size_in_bytes
     ] | add // 0
