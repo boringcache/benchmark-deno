@@ -5,6 +5,9 @@ Reproducible Linux x86 release-build proof for
 GitHub Actions `target/` archive strategy with BoringCache's managed remote
 Rust compiler cache.
 
+The first completed proof and the dated prospect assessment are in
+[`RESULTS.md`](RESULTS.md) and [`PROSPECT.md`](PROSPECT.md).
+
 ## The question
 
 For a normal adjacent Deno commit on a fresh runner, does remote compiler
