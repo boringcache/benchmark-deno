@@ -28,8 +28,8 @@ jobs:
     steps:
       - name: Validate BoringCache secrets
         env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
-          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
         run: |
           [[ -n "$BORINGCACHE_RESTORE_TOKEN" ]] || { echo "Missing BoringCache restore token" >&2; exit 1; }
           [[ -n "$BORINGCACHE_SAVE_TOKEN" ]] || { echo "Missing BoringCache save token" >&2; exit 1; }
@@ -58,6 +58,11 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: ${{ steps.source.outputs.DENO_RUST_VERSION }}
+
       - name: Scope cache tags to this proof run
         run: ./scripts/scope-boringcache-run.sh "r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
 
@@ -70,16 +75,15 @@ jobs:
 
       - name: Configure BoringCache Rust compiler cache
         id: cache
-        uses: boringcache/one@9721d419d2c78c0780963d297eb3f81f24641a27 # v1.13.106
+        uses: boringcache/one@6b7033721b37075b2138fd0c769bf088e0836ce6 # v1.14.0
         with:
-          setup: mise
-          cli-version: ${{ inputs.cli_version || 'v1.13.106' }}
+          setup: none
+          cli-version: ${{ inputs.cli_version || 'v1.14.0' }}
           mode: sccache
+          trust-policy: publish
           working-directory: .
           cache-profiles: cargo
-          tools: rust@${{ steps.source.outputs.DENO_RUST_VERSION }}
           sccache-version: 0.16.0
-          proxy-port: 5000
           verify: wait
           diagnostics: verbose
           metadata-hints: |
@@ -88,8 +92,8 @@ jobs:
           fail-on-cache-error: true
           verbose: true
         env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
-          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
 
       - name: Capture cache setup timing
         id: cache_timing
@@ -152,7 +156,7 @@ jobs:
     steps:
       - name: Validate BoringCache restore secret
         env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
         run: |
           [[ -n "$BORINGCACHE_RESTORE_TOKEN" ]] || { echo "Missing BoringCache restore token" >&2; exit 1; }
 
@@ -180,6 +184,11 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: ${{ steps.source.outputs.DENO_RUST_VERSION }}
+
       - name: Scope cache tags to this proof run
         run: ./scripts/scope-boringcache-run.sh "r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
 
@@ -192,18 +201,15 @@ jobs:
 
       - name: Restore BoringCache Rust compiler cache
         id: cache
-        uses: boringcache/one@9721d419d2c78c0780963d297eb3f81f24641a27 # v1.13.106
+        uses: boringcache/one@6b7033721b37075b2138fd0c769bf088e0836ce6 # v1.14.0
         with:
-          setup: mise
-          cli-version: ${{ inputs.cli_version || 'v1.13.106' }}
+          setup: none
+          cli-version: ${{ inputs.cli_version || 'v1.14.0' }}
           mode: sccache
+          trust-policy: restore
           working-directory: .
           cache-profiles: cargo
-          tools: rust@${{ steps.source.outputs.DENO_RUST_VERSION }}
-          read-only: true
-          save-policy: off
           sccache-version: 0.16.0
-          proxy-port: 5000
           verify: check
           diagnostics: verbose
           metadata-hints: |
@@ -212,7 +218,7 @@ jobs:
           fail-on-cache-error: true
           verbose: true
         env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
 
       - name: Capture cache setup timing
         id: cache_timing
@@ -221,7 +227,7 @@ jobs:
       - name: Measure BoringCache storage
         id: cache_size
         env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_EXACT_TAGS: ${{ needs.seed-base.outputs.sccache_tag }}
         run: |
           bytes="$(./scripts/sum-boringcache-check-sizes.sh \
