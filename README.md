@@ -60,9 +60,9 @@ mode:
 3. On a fresh runner, restore the same run-scoped cache read-only.
 4. Build the head commit and capture `sccache --show-stats`.
 
-Both strategies use Rust 1.95.0 and Deno's Linux sysroot, LLVM 22,
-linker-plugin LTO, ThinLTO cache flags, release packages, binaries, and
-`denort_desktop` build.
+Both strategies use Rust 1.95.0, Deno's `v2.x` snapshot-minifier runtime, and
+Deno's Linux sysroot, LLVM 22, linker-plugin LTO, ThinLTO cache flags, release
+packages, binaries, and `denort_desktop` build.
 
 ## Run it
 

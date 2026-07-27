@@ -39,6 +39,11 @@ jobs:
       - name: Prepare base source
         run: ./scripts/prepare-source.sh base
 
+      - name: Install Deno snapshot minifier runtime
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
+        with:
+          deno-version: v2.x
+
       - name: Free runner disk space
         run: ./scripts/free-runner-disk.sh
 
@@ -171,6 +176,11 @@ jobs:
 
       - name: Prepare rolling source
         run: ./scripts/prepare-source.sh head
+
+      - name: Install Deno snapshot minifier runtime
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
+        with:
+          deno-version: v2.x
 
       - name: Free runner disk space
         run: ./scripts/free-runner-disk.sh

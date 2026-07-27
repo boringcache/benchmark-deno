@@ -53,6 +53,11 @@ jobs:
       - name: Prepare base source
         run: ./scripts/prepare-source.sh base
 
+      - name: Install Deno snapshot minifier runtime
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
+        with:
+          deno-version: v2.x
+
       - name: Scope cache tags to this proof run
         run: ./scripts/scope-boringcache-run.sh "r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
 
@@ -169,6 +174,11 @@ jobs:
 
       - name: Prepare rolling source
         run: ./scripts/prepare-source.sh head
+
+      - name: Install Deno snapshot minifier runtime
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
+        with:
+          deno-version: v2.x
 
       - name: Scope cache tags to this proof run
         run: ./scripts/scope-boringcache-run.sh "r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
