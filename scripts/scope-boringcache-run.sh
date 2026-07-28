@@ -19,7 +19,6 @@ for base_tag in \
   deno-cargo-registry \
   deno-release-lto-cache \
   deno-actions-cargo-registry \
-  deno-actions-cargo-git \
   deno-actions-cargo-bin \
   deno-actions-target; do
   old_tag="${base_tag}-local"

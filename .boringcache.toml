@@ -19,10 +19,6 @@ path = "upstream/target/release/lto-cache"
 tag = "deno-actions-cargo-registry-local"
 path = "~/.cargo/registry"
 
-[entries.actions-cargo-git]
-tag = "deno-actions-cargo-git-local"
-path = "~/.cargo/git"
-
 [entries.actions-cargo-bin]
 tag = "deno-actions-cargo-bin-local"
 path = "~/.cargo/bin"
@@ -40,7 +36,6 @@ entries = ["cargo-registry", "release-lto"]
 [profiles.full-target]
 entries = [
   "actions-cargo-registry",
-  "actions-cargo-git",
   "actions-cargo-bin",
   "actions-target",
 ]
