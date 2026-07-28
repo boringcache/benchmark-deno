@@ -18,6 +18,8 @@ on:
           - release-hybrid
           - debug
           - release-sccache
+          - release-full-target
+          - debug-full-target
 
 permissions:
   actions: write
@@ -26,6 +28,7 @@ permissions:
 jobs:
   actions-cache:
     name: Actions cache baseline
+    if: ${{ !endsWith(inputs.experiment, '-full-target') }}
     uses: ./.github/workflows/deno-actions-cache.yml
     with:
       benchmark_id: ${{ inputs.experiment == 'debug' && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
@@ -35,6 +38,7 @@ jobs:
 
   boringcache:
     name: BoringCache candidate
+    if: ${{ !endsWith(inputs.experiment, '-full-target') }}
     uses: ./.github/workflows/deno-boringcache.yml
     with:
       benchmark_id: ${{ inputs.experiment == 'debug' && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
@@ -46,8 +50,21 @@ jobs:
       cli_version: ${{ inputs.cli_version }}
     secrets: inherit
 
+  boringcache-full-target:
+    name: BoringCache full target plus sccache
+    if: ${{ endsWith(inputs.experiment, '-full-target') }}
+    uses: ./.github/workflows/deno-boringcache-full-target.yml
+    with:
+      benchmark_id: ${{ startsWith(inputs.experiment, 'debug-') && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
+      build_profile: ${{ startsWith(inputs.experiment, 'debug-') && 'debug' || 'release' }}
+      source_run_id: ${{ startsWith(inputs.experiment, 'debug-') && '30333410651' || '30333408848' }}
+      source_run_attempt: "1"
+      cli_version: ${{ inputs.cli_version }}
+    secrets: inherit
+
   compare:
     name: Compare results
+    if: ${{ !endsWith(inputs.experiment, '-full-target') }}
     needs: [actions-cache, boringcache]
     runs-on: ubuntu-24.04
     env:
