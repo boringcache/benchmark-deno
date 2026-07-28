@@ -229,6 +229,11 @@ jobs:
         id: cache_start
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare exact Cargo bin restore destination
+        run: |
+          mkdir -p "${HOME}/.cargo/bin"
+          find "${HOME}/.cargo/bin" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+
       - name: Restore the full target and remote compiler cache
         id: cache
         uses: boringcache/one@6b7033721b37075b2138fd0c769bf088e0836ce6 # v1.14.0
