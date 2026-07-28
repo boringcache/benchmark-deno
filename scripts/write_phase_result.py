@@ -30,7 +30,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-import-status", default="")
     parser.add_argument("--sccache-stats-file")
     parser.add_argument("--require-sccache-evidence", action="store_true")
-    parser.add_argument("--storage-breakdown-file")
     parser.add_argument("--cli-version", required=True)
     parser.add_argument("--action-sha", required=True)
     parser.add_argument("--output-dir", default="benchmark-results")
@@ -107,14 +106,6 @@ def parse_sccache_stats(path: Path | None) -> dict[str, Any] | None:
     return parsed
 
 
-def read_json(path: Path | None) -> dict | None:
-    if path is None:
-        return None
-    if not path.is_file():
-        raise FileNotFoundError(path)
-    return json.loads(path.read_text())
-
-
 def main() -> int:
     args = parse_args()
     output_dir = Path(args.output_dir)
@@ -129,9 +120,6 @@ def main() -> int:
         if "cache_hits" not in sccache or "cache_misses" not in sccache:
             raise ValueError("Required sccache hit/miss evidence is missing")
 
-    storage_breakdown_path = (
-        Path(args.storage_breakdown_file) if args.storage_breakdown_file else None
-    )
     cache_components = [
         component.strip()
         for component in args.cache_components.split(",")
@@ -168,7 +156,6 @@ def main() -> int:
             "mode": args.cache_mode,
             "components": cache_components,
             "import_status": args.cache_import_status or None,
-            "storage_breakdown": read_json(storage_breakdown_path),
         },
         "classification": {
             "sample_valid": True,
