@@ -12,7 +12,8 @@ fi
 config_path="${repo_root}/.boringcache.toml"
 for base_tag in \
   deno-cargo-registry \
-  deno-release-rust-cache; do
+  deno-release-lto-cache \
+  deno-rust-cache; do
   old_tag="${base_tag}-local"
   new_tag="${base_tag}-${scope}"
   if ! grep -Fq "tag = \"${old_tag}\"" "$config_path"; then

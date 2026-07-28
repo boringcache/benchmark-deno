@@ -1,17 +1,24 @@
 workspace = "boringcache/benchmark-deno"
 
-# Deno's existing target archive is the comparison baseline. The BoringCache
-# lane intentionally restores Cargo state and uses the managed remote sccache
-# proxy without archiving target/, so the rolling result isolates compiler
-# artifact reuse from whole-directory target restoration.
+# Deno's existing target archive is the comparison baseline. The pure
+# BoringCache lane restores only Cargo state and remote compiler artifacts. The
+# explicitly labelled release-hybrid profile also preserves Deno's capped
+# ThinLTO cache without restoring the rest of target/.
 
 [entries.cargo-registry]
 tag = "deno-cargo-registry-local"
 
+[entries.release-lto]
+tag = "deno-release-lto-cache-local"
+path = "upstream/target/release/lto-cache"
+
 [profiles.cargo]
 entries = ["cargo-registry"]
 
+[profiles.release-hybrid]
+entries = ["cargo-registry", "release-lto"]
+
 [adapters.sccache]
-tag = "deno-release-rust-cache-local"
-command = ["./scripts/run-deno-release-build.sh"]
+tag = "deno-rust-cache-local"
+command = ["./scripts/run-deno-build.sh"]
 no-git = true
