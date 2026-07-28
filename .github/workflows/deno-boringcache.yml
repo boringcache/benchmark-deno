@@ -276,7 +276,6 @@ jobs:
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_EXACT_TAGS: ${{ needs.seed-base.outputs.sccache_tag }}
-          BORINGCACHE_STORAGE_BREAKDOWN_PATH: /tmp/deno-storage-breakdown.json
         run: |
           bytes="$(./scripts/sum-boringcache-check-sizes.sh \
             "$BENCHMARK_WORKSPACE" \
@@ -335,7 +334,6 @@ jobs:
             --cache-import-status ok \
             --sccache-stats-file /tmp/deno-rolling-sccache-stats.txt \
             --require-sccache-evidence \
-            --storage-breakdown-file /tmp/deno-storage-breakdown.json \
             --cli-version "${{ inputs.cli_version || 'v1.14.0' }}" \
             --action-sha 6b7033721b37075b2138fd0c769bf088e0836ce6
 
