@@ -2,11 +2,13 @@
 
 Reproducible Linux x86 release and debug build proofs for
 [`denoland/deno`](https://github.com/denoland/deno). It compares Deno's current
-GitHub Actions `target/` archive strategy with two deliberately separate
+GitHub Actions `target/` archive strategy with three deliberately separate
 BoringCache candidates:
 
 - remote sccache plus only the capped release ThinLTO archive
 - remote sccache alone for Deno's ordinary Linux debug build
+- the same promoted Cargo and full-`target/` archive contents plus remote
+  sccache, as a migration control that does not repeat the cold build
 
 Stable proof runs pin `boringcache/one` `v1.14.0` by immutable commit and keep
 Rust installation in the host workflow. Canary runs require an exact immutable
@@ -23,6 +25,9 @@ For a normal adjacent Deno commit on a fresh runner:
    the previous commit's multi-gigabyte release `target/` archive?
 2. Does remote compiler reuse beat whole-`target/` restoration for the
    high-frequency Linux debug build?
+3. When BoringCache restores the existing full target state as well as
+   sccache, does the complete migration beat the Actions restore-plus-build
+   path?
 
 The proof reports the parts needed to answer that honestly:
 
@@ -65,8 +70,8 @@ The target archive uses the same exclusions as Deno's workflow.
 
 ### BoringCache candidates
 
-Both candidates use an immutable `boringcache/one` release in `sccache` proxy
-mode:
+The two compiler-cache experiments use an immutable `boringcache/one` release
+in `sccache` proxy mode:
 
 1. Build the base commit with an empty, run-scoped remote compiler cache.
 2. Preserve Cargo registry state. The release-hybrid row additionally archives
@@ -81,6 +86,14 @@ release command includes Deno's release binaries and `denort_desktop`; the
 debug command is the pinned ordinary-PR command with
 `CARGO_PROFILE_DEV_DEBUG=0`.
 
+The full-target control does not run another cold build. It restores the exact
+run-scoped Actions Cargo and target archives from the completed proof, promotes
+their actual contents into BoringCache archive entries, and reuses that proof's
+run-scoped sccache tag. Its fresh rolling runner restores all three surfaces,
+applies Deno's mtime action, and builds the same pinned head commit. The
+promoted base artifact records zero build seconds so it cannot be mistaken for
+a second cold sample.
+
 ## Run it
 
 The repository needs these Actions secrets:
@@ -88,21 +101,25 @@ The repository needs these Actions secrets:
 - `BORINGCACHE_RESTORE_TOKEN`
 - `BORINGCACHE_SAVE_TOKEN`
 
-Run **Deno release hybrid cache proof** and **Deno Linux debug cache proof**
-from the Actions tab. The optional `cli_version` input can pin a canary CLI
-release. Each proof runs its two strategies in parallel and publishes one
-comparison table and JSON artifact.
+Run **Deno release hybrid cache proof**, **Deno Linux debug cache proof**, or
+either full-target proof from the Actions tab. The optional `cli_version` input
+can pin a canary CLI release. Full-target proofs also require the completed
+source proof run ID whose seed and Actions result should be reused. Each proof
+publishes one comparison table and JSON artifact.
 
 ## Interpreting the result
 
-The rolling row is the decision row. A useful result should have all three:
+The rolling row is the decision row. A smaller-cache experiment should have
+all three:
 
 - lower restore-plus-build time than the Actions cache baseline
 - a high Rust compiler-cache hit rate for the unchanged graph
 - materially less stored data than the base Cargo plus target archives
 
 The release-hybrid result is not a pure remote-sccache claim; its artifact names
-the ThinLTO archive explicitly. If either rolling build is slower, the report
+the ThinLTO archive explicitly. The full-target control is intentionally a
+superset of the baseline and may store more data because it adds sccache; judge
+it first on restore-plus-build time. If any rolling build is slower, the report
 says so directly. Before proposing a migration, repeat the winning run and add
 macOS only after Linux shows a stable win.
 

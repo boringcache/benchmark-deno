@@ -1,17 +1,20 @@
 # Deno prospect review
 
-Assessment date: 2026-07-27
+Assessment date: 2026-07-28
 
 ## Recommendation
 
-Deno is a strong account and a weak target for a generic "replace your Rust
-cache" pitch. Market BoringCache as a design-partner pilot for one narrow CI
-lane, not as a proven full-release acceleration.
+Deno is a strong account but not a current BoringCache performance prospect.
+Do not pitch a Rust-cache migration from this evidence. Four tested sccache
+shapes lost on rolling restore plus build, including the release ThinLTO hybrid,
+the ordinary Linux debug lane, and no-cold controls that restored the same full
+target state before enabling sccache.
 
-The best next wedge is either a hybrid sccache + ThinLTO cache or the Linux
-debug build. Do not lead with Docker: the repository has a development-container
-Dockerfile, but no Docker Buildx workflow or meaningful image-build cache
-surface in its main CI.
+The archive backend itself restored the promoted target state correctly and
+faster than Actions, but that signal is not enough for outreach because the
+complete build remained slower. Do not lead with Docker either: the repository
+has a development-container Dockerfile, but no Docker Buildx workflow or
+meaningful image-build cache surface in its main CI.
 
 ## Why the account matters
 
@@ -39,9 +42,10 @@ surface in its main CI.
 
 | BoringCache surface | Fit | Evidence |
 |---|---|---|
-| Remote Rust sccache alone | Not a release migration yet | The proof reached 98% hits but finished 8m26s slower than target restoration. |
-| sccache + narrow ThinLTO archive | Best release follow-up | It preserves compiler reuse while targeting the non-cacheable link tail. |
-| Linux debug Rust cache | Best high-frequency wedge | Ordinary PRs run it, and it has less ThinLTO/relink work than release. |
+| Remote Rust sccache alone | No | Release reached 98% hits but still lost; debug reached 96.6% and was 10m28s slower. |
+| sccache + narrow ThinLTO archive | No | The 141.85 MB LTO entry restored in 8s, but the complete release path was 8m slower. |
+| Full target + sccache | No first-migration win | Archive setup beat Actions by 29s release and 6s debug, but the complete paths lost by 5m10s and 2m20s. |
+| Full-target archive only | Unproven transport control | Promoted archive components used 12.2% less storage release and 8.8% less debug; sccache must be disabled to isolate this signal. |
 | Cargo/tool cache | Secondary | Dependency restore works, but Deno's expensive time is in build/link work. |
 | Docker/BuildKit | Poor | No main CI image-build workflow was found. |
 
@@ -53,18 +57,8 @@ runners, cache versions, and release-LTO capacity, and
 [`@nathanwhit`](https://github.com/nathanwhit), who has recently changed startup
 ordering and snapshot/link performance.
 
-Suggested message:
-
-> We reproduced Deno's Linux release build on an adjacent commit and tested a
-> run-scoped remote Rust cache against the existing target archive. The Rust
-> graph reused extremely well: 2,957 hits, 59 misses, and zero cache errors.
-> But the full result was 8m26s slower because ThinLTO and the release relink,
-> not Rust compilation, dominate the tail.
->
-> We do not want to sell you a misleading sccache replacement. We would like to
-> test one focused follow-up at our cost: either preserve only the capped
-> ThinLTO cache alongside remote compiler artifacts, or benchmark the everyday
-> Linux debug lane. The harness, pinned commits, and losing result are public.
-
-That is a credible engineering-led opening. Gate any stronger performance or
-migration claim on a repeated hybrid/debug win.
+Do not send the earlier design-partner pitch. The follow-ups it proposed are
+now complete and losing. Keep the contacts only for a future archive-only
+transport control or a materially different product surface. Any future note
+should lead with the public losing results and make no acceleration claim until
+a paired rolling sample wins and repeats.
