@@ -14,7 +14,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strategy",
         required=True,
-        choices=("actions-cache", "boringcache", "boringcache-hybrid"),
+        choices=(
+            "actions-cache",
+            "boringcache",
+            "boringcache-hybrid",
+            "boringcache-full-target",
+        ),
     )
     parser.add_argument("--benchmark", required=True)
     parser.add_argument("--build-profile", required=True, choices=("release", "debug"))

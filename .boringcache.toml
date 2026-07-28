@@ -12,11 +12,38 @@ tag = "deno-cargo-registry-local"
 tag = "deno-release-lto-cache-local"
 path = "upstream/target/release/lto-cache"
 
+# Mirrors the directory paths restored by Deno's Actions cache lane. The
+# promotion workflow starts from that exact archive, so registry source trees
+# and Git checkouts excluded by the source cache are not introduced here.
+[entries.actions-cargo-registry]
+tag = "deno-actions-cargo-registry-local"
+path = "~/.cargo/registry"
+
+[entries.actions-cargo-git]
+tag = "deno-actions-cargo-git-local"
+path = "~/.cargo/git"
+
+[entries.actions-cargo-bin]
+tag = "deno-actions-cargo-bin-local"
+path = "~/.cargo/bin"
+
+[entries.actions-target]
+tag = "deno-actions-target-local"
+path = "upstream/target"
+
 [profiles.cargo]
 entries = ["cargo-registry"]
 
 [profiles.release-hybrid]
 entries = ["cargo-registry", "release-lto"]
+
+[profiles.full-target]
+entries = [
+  "actions-cargo-registry",
+  "actions-cargo-git",
+  "actions-cargo-bin",
+  "actions-target",
+]
 
 [adapters.sccache]
 tag = "deno-rust-cache-local"

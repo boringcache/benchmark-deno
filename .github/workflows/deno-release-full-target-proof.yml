@@ -1,0 +1,31 @@
+name: "Deno release full-target plus sccache proof"
+run-name: ${{ inputs.cli_version == '' && 'Deno release full-target plus sccache proof' || format('Deno release full-target plus sccache proof | CLI {0}', inputs.cli_version) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      cli_version:
+        description: Optional BoringCache CLI release tag for a canary run.
+        required: false
+        type: string
+        default: ""
+      source_run_id:
+        description: Completed proof run containing the reusable Actions and sccache seed.
+        required: true
+        type: string
+        default: "30333408848"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  proof:
+    uses: ./.github/workflows/deno-boringcache-full-target.yml
+    with:
+      benchmark_id: deno-release-rust-cache
+      build_profile: release
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: "1"
+      cli_version: ${{ inputs.cli_version }}
+    secrets: inherit
