@@ -80,6 +80,6 @@ jobs:
       - name: Upload comparison
         uses: actions/upload-artifact@v6
         with:
-          name: benchmark-deno-release-rust-cache-comparison
+          name: benchmark-${{ env.BENCHMARK_ID }}-comparison
           path: benchmark-results
           if-no-files-found: error
