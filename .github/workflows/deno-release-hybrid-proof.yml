@@ -1,5 +1,5 @@
-name: "Deno Rust cache proof"
-run-name: ${{ inputs.cli_version == '' && 'Deno release cache proof' || format('Deno release cache proof | CLI {0}', inputs.cli_version) }}
+name: "Deno release hybrid cache proof"
+run-name: ${{ inputs.cli_version == '' && 'Deno release hybrid cache proof' || format('Deno release hybrid cache proof | CLI {0}', inputs.cli_version) }}
 
 on:
   workflow_dispatch:
@@ -16,22 +16,30 @@ permissions:
 
 jobs:
   actions-cache:
-    name: Actions cache baseline
+    name: Actions full target baseline
     uses: ./.github/workflows/deno-actions-cache.yml
     with:
+      benchmark_id: deno-release-rust-cache
+      build_profile: release
       cli_version: ${{ inputs.cli_version || 'v1.14.0' }}
     secrets: inherit
 
-  boringcache:
-    name: BoringCache candidate
+  boringcache-hybrid:
+    name: BoringCache sccache plus ThinLTO archive
     uses: ./.github/workflows/deno-boringcache.yml
     with:
+      benchmark_id: deno-release-rust-cache
+      build_profile: release
+      strategy: boringcache-hybrid
+      cache_profile: release-hybrid
+      cache_mode: sccache-plus-lto-archive
+      cache_components: cargo-registry,remote-sccache,release-thinlto-archive
       cli_version: ${{ inputs.cli_version }}
     secrets: inherit
 
   compare:
-    name: Compare results
-    needs: [actions-cache, boringcache]
+    name: Compare release results
+    needs: [actions-cache, boringcache-hybrid]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout benchmark repository
@@ -48,7 +56,10 @@ jobs:
         run: |
           ./scripts/render_comparison.py \
             --input-dir benchmark-phases \
-            --output-dir benchmark-results
+            --output-dir benchmark-results \
+            --benchmark deno-release-rust-cache \
+            --candidate-strategy boringcache-hybrid \
+            --title "Deno release hybrid cache proof"
 
       - name: Publish job summary
         run: cat benchmark-results/comparison.md >> "$GITHUB_STEP_SUMMARY"
@@ -56,6 +67,6 @@ jobs:
       - name: Upload comparison
         uses: actions/upload-artifact@v6
         with:
-          name: benchmark-deno-release-rust-cache-comparison
+          name: benchmark-deno-release-hybrid-comparison
           path: benchmark-results
           if-no-files-found: error

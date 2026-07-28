@@ -134,4 +134,4 @@ EOF
   echo "DENO_BENCHMARK_RUSTDOCFLAGS"
 } >> "$github_env"
 
-echo "Configured Deno's Linux release sysroot and LLVM ${llvm_version} environment."
+echo "Configured Deno's Linux sysroot and LLVM ${llvm_version} environment."

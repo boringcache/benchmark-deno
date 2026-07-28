@@ -2,13 +2,27 @@ name: "Deno release proof - Actions cache"
 
 on:
   workflow_call:
+    inputs:
+      benchmark_id:
+        required: false
+        type: string
+        default: deno-release-rust-cache
+      build_profile:
+        required: false
+        type: string
+        default: release
+      cli_version:
+        required: false
+        type: string
+        default: v1.14.0
 
 permissions:
   actions: write
   contents: read
 
 env:
-  BENCHMARK_ID: deno-release-rust-cache
+  BENCHMARK_ID: ${{ inputs.benchmark_id }}
+  DENO_BENCHMARK_PROFILE: ${{ inputs.build_profile }}
 
 jobs:
   seed-base:
@@ -48,12 +62,12 @@ jobs:
         run: ./scripts/free-runner-disk.sh
 
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: ${{ steps.source.outputs.DENO_RUST_VERSION }}
 
-      - name: Configure Deno release environment
-        run: ./scripts/setup-deno-release.sh
+      - name: Configure Deno Linux build environment
+        run: ./scripts/setup-deno-linux.sh
 
       - name: Define cache keys
         id: keys
@@ -88,7 +102,7 @@ jobs:
         id: build
         run: |
           started_at="$(date +%s)"
-          ./scripts/run-deno-release-build.sh
+          ./scripts/run-deno-build.sh
           finished_at="$(date +%s)"
           seconds="$((finished_at - started_at))"
           echo "seconds=${seconds}" >> "$GITHUB_OUTPUT"
@@ -139,7 +153,9 @@ jobs:
       - name: Write base result
         run: |
           ./scripts/write_phase_result.py \
+            --benchmark "$BENCHMARK_ID" \
             --strategy actions-cache \
+            --build-profile "$DENO_BENCHMARK_PROFILE" \
             --phase base \
             --source-sha "${{ steps.source.outputs.DENO_BASE_SHA }}" \
             --restore-seconds 0 \
@@ -147,7 +163,11 @@ jobs:
             --end-to-end-seconds "${{ steps.build.outputs.seconds }}" \
             --cache-storage-bytes "${{ steps.cache_size.outputs.bytes }}" \
             --cache-key "${{ steps.keys.outputs.target_key }}" \
-            --cache-import-status cold
+            --cache-mode target-archive \
+            --cache-components cargo-registry,target-directory \
+            --cache-import-status cold \
+            --cli-version "${{ inputs.cli_version }}" \
+            --action-sha 6b7033721b37075b2138fd0c769bf088e0836ce6
 
       - name: Upload base result
         uses: actions/upload-artifact@v6
@@ -190,12 +210,12 @@ jobs:
         run: ./scripts/free-runner-disk.sh
 
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: ${{ steps.source.outputs.DENO_RUST_VERSION }}
 
-      - name: Configure Deno release environment
-        run: ./scripts/setup-deno-release.sh
+      - name: Configure Deno Linux build environment
+        run: ./scripts/setup-deno-linux.sh
 
       - name: Start restore timing
         id: restore_start
@@ -241,7 +261,7 @@ jobs:
         id: build
         run: |
           started_at="$(date +%s)"
-          ./scripts/run-deno-release-build.sh
+          ./scripts/run-deno-build.sh
           finished_at="$(date +%s)"
           seconds="$((finished_at - started_at))"
           echo "seconds=${seconds}" >> "$GITHUB_OUTPUT"
@@ -250,7 +270,9 @@ jobs:
         run: |
           end_to_end="$(( ${{ steps.restore.outputs.seconds }} + ${{ steps.build.outputs.seconds }} ))"
           ./scripts/write_phase_result.py \
+            --benchmark "$BENCHMARK_ID" \
             --strategy actions-cache \
+            --build-profile "$DENO_BENCHMARK_PROFILE" \
             --phase rolling \
             --source-sha "${{ steps.source.outputs.DENO_HEAD_SHA }}" \
             --restore-seconds "${{ steps.restore.outputs.seconds }}" \
@@ -258,7 +280,11 @@ jobs:
             --end-to-end-seconds "$end_to_end" \
             --cache-storage-bytes "${{ needs.seed-base.outputs.cache_storage_bytes }}" \
             --cache-key "${{ steps.restore_target.outputs.cache-matched-key }}" \
-            --cache-import-status hit
+            --cache-mode target-archive \
+            --cache-components cargo-registry,target-directory \
+            --cache-import-status hit \
+            --cli-version "${{ inputs.cli_version }}" \
+            --action-sha 6b7033721b37075b2138fd0c769bf088e0836ce6
 
       - name: Upload rolling result
         uses: actions/upload-artifact@v6

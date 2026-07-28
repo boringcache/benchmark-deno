@@ -47,6 +47,36 @@ class SccacheStatsTest(unittest.TestCase):
                 },
             )
 
+    def test_parses_native_error_and_duration_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "Compile requests                    20\n"
+                "Cache hits                          18\n"
+                "Cache hits (Rust)                   17\n"
+                "Cache misses                         2\n"
+                "Cache misses (C/C++)                 2\n"
+                "Cache errors                         3\n"
+                "Cache read errors                    0\n"
+                "Cache write errors                   3\n"
+                "Cache timeouts                       0\n"
+                "Average cache read hit           0.004 s\n"
+                "Non-cacheable reasons:\n"
+                "crate-type                         12\n"
+                "missing input                       2\n"
+                "\n"
+            )
+
+            stats = write_phase_result.parse_sccache_stats(path)
+
+            self.assertEqual(stats["cache_hit_percent"], 90)
+            self.assertEqual(stats["cache_hits_rust"], 17)
+            self.assertEqual(stats["cache_misses_c_cpp"], 2)
+            self.assertEqual(stats["cache_write_errors"], 3)
+            self.assertEqual(stats["average_cache_read_hit_seconds"], 0.004)
+            self.assertEqual(
+                stats["non_cacheable_reasons"], {"crate-type": 12, "missing input": 2}
+            )
 
 class ComparisonReportTest(unittest.TestCase):
     def test_reports_rolling_improvement_without_overselling(self):
@@ -83,6 +113,31 @@ class ComparisonReportTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "Missing benchmark results"):
                 render_comparison.load_results(Path(directory))
+
+    def test_supports_explicit_hybrid_candidate(self):
+        results = {}
+        for strategy in ("actions-cache", "boringcache-hybrid"):
+            for phase in ("base", "rolling"):
+                results[(strategy, phase)] = {
+                    "strategy": strategy,
+                    "phase": phase,
+                    "timing": {
+                        "restore_seconds": 5,
+                        "build_seconds": 100,
+                        "end_to_end_seconds": 105,
+                    },
+                    "cache": {"storage_bytes": 1024},
+                    "sccache": None,
+                }
+
+        payload = render_comparison.comparison_payload(
+            results,
+            candidate_strategy="boringcache-hybrid",
+            title="Deno release hybrid cache proof",
+        )
+
+        self.assertEqual(payload["candidate_strategy"], "boringcache-hybrid")
+        self.assertIn("Deno release hybrid", render_comparison.render_markdown(payload))
 
 
 if __name__ == "__main__":

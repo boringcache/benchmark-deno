@@ -8,14 +8,39 @@ on:
         required: false
         type: string
         default: ""
+      benchmark_id:
+        required: false
+        type: string
+        default: deno-release-rust-cache
+      build_profile:
+        required: false
+        type: string
+        default: release
+      strategy:
+        required: false
+        type: string
+        default: boringcache
+      cache_profile:
+        required: false
+        type: string
+        default: cargo
+      cache_mode:
+        required: false
+        type: string
+        default: sccache
+      cache_components:
+        required: false
+        type: string
+        default: cargo-registry,remote-sccache
 
 permissions:
   actions: read
   contents: read
 
 env:
-  BENCHMARK_ID: deno-release-rust-cache
+  BENCHMARK_ID: ${{ inputs.benchmark_id }}
   BENCHMARK_WORKSPACE: ${{ github.repository }}
+  DENO_BENCHMARK_PROFILE: ${{ inputs.build_profile }}
 
 jobs:
   seed-base:
@@ -82,12 +107,12 @@ jobs:
           mode: sccache
           trust-policy: publish
           working-directory: .
-          cache-profiles: cargo
+          cache-profiles: ${{ inputs.cache_profile }}
           sccache-version: 0.16.0
           verify: wait
           diagnostics: verbose
           metadata-hints: |
-            benchmark=deno-release-rust-cache
+            benchmark=${{ inputs.benchmark_id }}
             phase=base
           fail-on-cache-error: true
           verbose: true
@@ -107,45 +132,58 @@ jobs:
           sccache_tag=""
           IFS=',' read -r -a tags <<< "$resolved_tags"
           for tag in "${tags[@]}"; do
-            [[ "$tag" == deno-release-rust-cache-* ]] && sccache_tag="$tag"
+            [[ "$tag" == deno-rust-cache-* ]] && sccache_tag="$tag"
           done
           [[ -n "$sccache_tag" ]] || { echo "Could not identify the exact sccache tag in: $resolved_tags" >&2; exit 1; }
           echo "tags_csv=${resolved_tags}" >> "$GITHUB_OUTPUT"
           echo "sccache_tag=${sccache_tag}" >> "$GITHUB_OUTPUT"
 
-      - name: Configure Deno release environment
-        run: ./scripts/setup-deno-release.sh
+      - name: Configure Deno Linux build environment
+        run: ./scripts/setup-deno-linux.sh
 
       - name: Build pinned base commit
         id: build
         run: |
           sccache --zero-stats >/dev/null 2>&1 || true
           started_at="$(date +%s)"
-          ./scripts/run-deno-release-build.sh
+          ./scripts/run-deno-build.sh
           finished_at="$(date +%s)"
           seconds="$((finished_at - started_at))"
           echo "seconds=${seconds}" >> "$GITHUB_OUTPUT"
           sccache --show-stats | tee /tmp/deno-base-sccache-stats.txt
 
+      - name: Require release ThinLTO seed state
+        if: inputs.cache_profile == 'release-hybrid'
+        run: |
+          [[ -d upstream/target/release/lto-cache ]] || { echo "Deno did not create the ThinLTO cache" >&2; exit 1; }
+          [[ -n "$(find upstream/target/release/lto-cache -type f -print -quit)" ]] || { echo "Deno created an empty ThinLTO cache" >&2; exit 1; }
+
       - name: Write base result
         run: |
           end_to_end="$(( ${{ steps.cache_timing.outputs.seconds }} + ${{ steps.build.outputs.seconds }} ))"
           ./scripts/write_phase_result.py \
-            --strategy boringcache \
+            --benchmark "$BENCHMARK_ID" \
+            --strategy "${{ inputs.strategy }}" \
+            --build-profile "$DENO_BENCHMARK_PROFILE" \
             --phase base \
             --source-sha "${{ steps.source.outputs.DENO_BASE_SHA }}" \
             --restore-seconds "${{ steps.cache_timing.outputs.seconds }}" \
             --build-seconds "${{ steps.build.outputs.seconds }}" \
             --end-to-end-seconds "$end_to_end" \
-            --cache-key "${{ steps.tags.outputs.sccache_tag }}" \
+            --cache-key "${{ steps.tags.outputs.tags_csv }}" \
+            --cache-mode "${{ inputs.cache_mode }}" \
+            --cache-components "${{ inputs.cache_components }}" \
             --cache-import-status cold \
-            --sccache-stats-file /tmp/deno-base-sccache-stats.txt
+            --sccache-stats-file /tmp/deno-base-sccache-stats.txt \
+            --require-sccache-evidence \
+            --cli-version "${{ inputs.cli_version || 'v1.14.0' }}" \
+            --action-sha 6b7033721b37075b2138fd0c769bf088e0836ce6
 
       - name: Upload base result
         uses: actions/upload-artifact@v6
         with:
-          name: phase-${{ env.BENCHMARK_ID }}-boringcache-base
-          path: benchmark-results/boringcache-base.json
+          name: phase-${{ env.BENCHMARK_ID }}-${{ inputs.strategy }}-base
+          path: benchmark-results/${{ inputs.strategy }}-base.json
           if-no-files-found: error
 
   rolling-head:
@@ -208,14 +246,15 @@ jobs:
           mode: sccache
           trust-policy: restore
           working-directory: .
-          cache-profiles: cargo
+          cache-profiles: ${{ inputs.cache_profile }}
           sccache-version: 0.16.0
           verify: check
           diagnostics: verbose
           metadata-hints: |
-            benchmark=deno-release-rust-cache
+            benchmark=${{ inputs.benchmark_id }}
             phase=rolling
           fail-on-cache-error: true
+          fail-on-cache-miss: true
           verbose: true
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
@@ -224,26 +263,35 @@ jobs:
         id: cache_timing
         run: echo "seconds=$(( $(date +%s) - ${{ steps.cache_start.outputs.started_at }} ))" >> "$GITHUB_OUTPUT"
 
+      - name: Require restored compiler and archive state
+        run: |
+          [[ "${{ steps.cache.outputs.sccache-hit }}" == "true" ]] || { echo "The run-scoped sccache tag was not restored" >&2; exit 1; }
+          if [[ "${{ inputs.cache_profile }}" == "release-hybrid" ]]; then
+            [[ -d upstream/target/release/lto-cache ]] || { echo "The release ThinLTO archive was not restored" >&2; exit 1; }
+            [[ -n "$(find upstream/target/release/lto-cache -type f -print -quit)" ]] || { echo "The restored release ThinLTO archive was empty" >&2; exit 1; }
+          fi
+
       - name: Measure BoringCache storage
         id: cache_size
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_EXACT_TAGS: ${{ needs.seed-base.outputs.sccache_tag }}
+          BORINGCACHE_STORAGE_BREAKDOWN_PATH: /tmp/deno-storage-breakdown.json
         run: |
           bytes="$(./scripts/sum-boringcache-check-sizes.sh \
             "$BENCHMARK_WORKSPACE" \
             "${{ needs.seed-base.outputs.tags_csv }}")"
           echo "bytes=${bytes}" >> "$GITHUB_OUTPUT"
 
-      - name: Configure Deno release environment
-        run: ./scripts/setup-deno-release.sh
+      - name: Configure Deno Linux build environment
+        run: ./scripts/setup-deno-linux.sh
 
       - name: Build rolling commit
         id: build
         run: |
           sccache --zero-stats >/dev/null 2>&1 || true
           started_at="$(date +%s)"
-          ./scripts/run-deno-release-build.sh
+          ./scripts/run-deno-build.sh
           finished_at="$(date +%s)"
           seconds="$((finished_at - started_at))"
           echo "seconds=${seconds}" >> "$GITHUB_OUTPUT"
@@ -272,20 +320,28 @@ jobs:
         run: |
           end_to_end="$(( ${{ steps.cache_timing.outputs.seconds }} + ${{ steps.build.outputs.seconds }} ))"
           ./scripts/write_phase_result.py \
-            --strategy boringcache \
+            --benchmark "$BENCHMARK_ID" \
+            --strategy "${{ inputs.strategy }}" \
+            --build-profile "$DENO_BENCHMARK_PROFILE" \
             --phase rolling \
             --source-sha "${{ steps.source.outputs.DENO_HEAD_SHA }}" \
             --restore-seconds "${{ steps.cache_timing.outputs.seconds }}" \
             --build-seconds "${{ steps.build.outputs.seconds }}" \
             --end-to-end-seconds "$end_to_end" \
             --cache-storage-bytes "${{ steps.cache_size.outputs.bytes }}" \
-            --cache-key "${{ needs.seed-base.outputs.sccache_tag }}" \
+            --cache-key "${{ needs.seed-base.outputs.tags_csv }}" \
+            --cache-mode "${{ inputs.cache_mode }}" \
+            --cache-components "${{ inputs.cache_components }}" \
             --cache-import-status ok \
-            --sccache-stats-file /tmp/deno-rolling-sccache-stats.txt
+            --sccache-stats-file /tmp/deno-rolling-sccache-stats.txt \
+            --require-sccache-evidence \
+            --storage-breakdown-file /tmp/deno-storage-breakdown.json \
+            --cli-version "${{ inputs.cli_version || 'v1.14.0' }}" \
+            --action-sha 6b7033721b37075b2138fd0c769bf088e0836ce6
 
       - name: Upload rolling result
         uses: actions/upload-artifact@v6
         with:
-          name: phase-${{ env.BENCHMARK_ID }}-boringcache-rolling
-          path: benchmark-results/boringcache-rolling.json
+          name: phase-${{ env.BENCHMARK_ID }}-${{ inputs.strategy }}-rolling
+          path: benchmark-results/${{ inputs.strategy }}-rolling.json
           if-no-files-found: error
