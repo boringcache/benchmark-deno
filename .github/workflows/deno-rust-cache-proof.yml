@@ -1,5 +1,5 @@
 name: "Deno Rust cache proof"
-run-name: ${{ inputs.cli_version == '' && 'Deno release cache proof' || format('Deno release cache proof | CLI {0}', inputs.cli_version) }}
+run-name: ${{ inputs.cli_version == '' && format('Deno {0} cache proof', inputs.experiment) || format('Deno {0} cache proof | CLI {1}', inputs.experiment, inputs.cli_version) }}
 
 on:
   workflow_dispatch:
@@ -9,6 +9,15 @@ on:
         required: false
         type: string
         default: ""
+      experiment:
+        description: Cache experiment to run.
+        required: true
+        type: choice
+        default: release-hybrid
+        options:
+          - release-hybrid
+          - debug
+          - release-sccache
 
 permissions:
   actions: write
@@ -19,6 +28,8 @@ jobs:
     name: Actions cache baseline
     uses: ./.github/workflows/deno-actions-cache.yml
     with:
+      benchmark_id: ${{ inputs.experiment == 'debug' && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
+      build_profile: ${{ inputs.experiment == 'debug' && 'debug' || 'release' }}
       cli_version: ${{ inputs.cli_version || 'v1.14.0' }}
     secrets: inherit
 
@@ -26,6 +37,12 @@ jobs:
     name: BoringCache candidate
     uses: ./.github/workflows/deno-boringcache.yml
     with:
+      benchmark_id: ${{ inputs.experiment == 'debug' && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
+      build_profile: ${{ inputs.experiment == 'debug' && 'debug' || 'release' }}
+      strategy: ${{ inputs.experiment == 'release-hybrid' && 'boringcache-hybrid' || 'boringcache' }}
+      cache_profile: ${{ inputs.experiment == 'release-hybrid' && 'release-hybrid' || 'cargo' }}
+      cache_mode: ${{ inputs.experiment == 'release-hybrid' && 'sccache-plus-lto-archive' || 'sccache' }}
+      cache_components: ${{ inputs.experiment == 'release-hybrid' && 'cargo-registry,remote-sccache,release-thinlto-archive' || 'cargo-registry,remote-sccache' }}
       cli_version: ${{ inputs.cli_version }}
     secrets: inherit
 
@@ -33,6 +50,10 @@ jobs:
     name: Compare results
     needs: [actions-cache, boringcache]
     runs-on: ubuntu-24.04
+    env:
+      BENCHMARK_ID: ${{ inputs.experiment == 'debug' && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
+      CANDIDATE_STRATEGY: ${{ inputs.experiment == 'release-hybrid' && 'boringcache-hybrid' || 'boringcache' }}
+      COMPARISON_TITLE: ${{ inputs.experiment == 'debug' && 'Deno Linux debug cache proof' || (inputs.experiment == 'release-hybrid' && 'Deno release hybrid cache proof' || 'Deno release Rust cache proof') }}
     steps:
       - name: Checkout benchmark repository
         uses: actions/checkout@v6
@@ -40,7 +61,7 @@ jobs:
       - name: Download phase results
         uses: actions/download-artifact@v8
         with:
-          pattern: phase-deno-release-rust-cache-*
+          pattern: phase-${{ env.BENCHMARK_ID }}-*
           path: benchmark-phases
           merge-multiple: true
 
@@ -48,7 +69,10 @@ jobs:
         run: |
           ./scripts/render_comparison.py \
             --input-dir benchmark-phases \
-            --output-dir benchmark-results
+            --output-dir benchmark-results \
+            --benchmark "$BENCHMARK_ID" \
+            --candidate-strategy "$CANDIDATE_STRATEGY" \
+            --title "$COMPARISON_TITLE"
 
       - name: Publish job summary
         run: cat benchmark-results/comparison.md >> "$GITHUB_STEP_SUMMARY"
