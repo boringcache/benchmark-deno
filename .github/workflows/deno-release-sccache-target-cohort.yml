@@ -231,6 +231,10 @@ jobs:
             ~/.cache/sccache
             ~/.local/bin/sccache
             upstream/target
+            !upstream/target/*/gn_out
+            !upstream/target/*/gn_root
+            !upstream/target/*/*.zip
+            !upstream/target/*/*.tar.gz
           fail-on-cache-miss: true
 
       - name: Put the restored sccache binary on PATH
@@ -379,6 +383,11 @@ jobs:
       - name: Start cache restore timing
         id: cache_start
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare exact Cargo bin restore destination
+        run: |
+          mkdir -p "${HOME}/.cargo/bin"
+          find "${HOME}/.cargo/bin" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 
       - name: Restore the shared BoringCache target and sccache
         id: cache
