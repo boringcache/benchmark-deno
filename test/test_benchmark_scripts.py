@@ -40,6 +40,21 @@ class SccacheTargetCohortWorkflowTest(unittest.TestCase):
         )
         self.assertIn("test -s upstream/target/.mtime-cache-db.json", workflow)
 
+    def test_prunes_deno_exclusions_before_either_product_saves(self):
+        workflow = (
+            ROOT / ".github/workflows/deno-release-sccache-target-cohort.yml"
+        ).read_text()
+
+        build_step = workflow.index("Build the shared base seed")
+        prune_step = workflow.index(
+            "Apply Deno's target archive exclusions to the shared state"
+        )
+        actions_save = workflow.index("Save the Actions target and local sccache archive")
+        self.assertLess(build_step, prune_step)
+        self.assertLess(prune_step, actions_save)
+        for pattern in ("gn_out", "gn_root", "'*.zip'", "'*.tar.gz'"):
+            self.assertIn(pattern, workflow)
+
 
 class SccacheStatsTest(unittest.TestCase):
     def test_parses_hit_rate(self):
