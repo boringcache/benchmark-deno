@@ -567,9 +567,10 @@ class RollingControlComparisonTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Mismatched compiler environment identity"):
             compare_rolling_controls.compare(baseline, candidate, "Control")
 
-    def test_rejects_a_different_runner_cpu(self):
+    def test_reports_a_different_hosted_runner_cpu_without_claiming_attribution(self):
         baseline = {
             "benchmark": "deno-release-rust-cache",
+            "strategy": "actions-cache",
             "phase": "rolling",
             "project": {"repository": "denoland/deno", "source_sha": "head"},
             "workload": {"build_profile": "release"},
@@ -591,6 +592,7 @@ class RollingControlComparisonTest(unittest.TestCase):
         }
         candidate = {
             **baseline,
+            "strategy": "boringcache-target-only",
             "runner": {
                 **baseline["runner"],
                 "hardware": {
@@ -600,8 +602,12 @@ class RollingControlComparisonTest(unittest.TestCase):
             },
         }
 
-        with self.assertRaisesRegex(ValueError, "Mismatched runner hardware cpu_model"):
-            compare_rolling_controls.compare(baseline, candidate, "Control")
+        payload = compare_rolling_controls.compare(baseline, candidate, "Control")
+        markdown = compare_rolling_controls.render_markdown(payload)
+
+        self.assertFalse(payload["comparability"]["cpu_model_matched"])
+        self.assertIn("different CPU models", markdown)
+        self.assertNotIn("Candidate saved", markdown)
 
 
 if __name__ == "__main__":
