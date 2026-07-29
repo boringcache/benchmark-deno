@@ -119,7 +119,9 @@ same Cargo and target state into both archive products. The seed and both
 rolling jobs run Deno's own mtime action, so unchanged source identities line
 up with the restored target fingerprints. Deno's production target exclusions
 are applied once to the shared tree before either product saves it. Fresh
-rolling jobs keep
+rolling jobs restore the same Cargo registry, Cargo binaries, and normalized
+target paths; only sccache's local-disk versus remote representation differs.
+They keep
 `RUSTC_WRAPPER`, `CC`, `CXX`, and incremental settings identical while comparing
 BoringCache's eagerly warmed remote sccache with the Actions-archived local
 sccache. The report refuses to compare different runner image releases, CPU

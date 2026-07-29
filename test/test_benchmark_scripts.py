@@ -55,6 +55,19 @@ class SccacheTargetCohortWorkflowTest(unittest.TestCase):
         for pattern in ("gn_out", "gn_root", "'*.zip'", "'*.tar.gz'"):
             self.assertIn(pattern, workflow)
 
+    def test_actions_archive_matches_the_explicit_cargo_profile(self):
+        workflow = (
+            ROOT / ".github/workflows/deno-release-sccache-target-cohort.yml"
+        ).read_text()
+
+        self.assertEqual(workflow.count("~/.cargo/registry"), 2)
+        self.assertEqual(workflow.count("~/.cargo/bin"), 2)
+        self.assertNotIn("~/.cargo/registry/index", workflow)
+        self.assertNotIn("~/.cargo/registry/cache", workflow)
+        self.assertNotIn("~/.cargo/git/db", workflow)
+        self.assertNotIn("~/.cargo/.crates.toml", workflow)
+        self.assertNotIn("~/.cargo/.crates2.json", workflow)
+
 
 class SccacheStatsTest(unittest.TestCase):
     def test_parses_hit_rate(self):
