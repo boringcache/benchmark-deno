@@ -26,6 +26,21 @@ compare_rolling_controls = load_script("compare_rolling_controls.py")
 verify_restored_freshness = load_script("verify_restored_freshness.py")
 
 
+class SccacheTargetCohortWorkflowTest(unittest.TestCase):
+    def test_establishes_deno_mtimes_before_building_the_shared_seed(self):
+        workflow = (
+            ROOT / ".github/workflows/deno-release-sccache-target-cohort.yml"
+        ).read_text()
+
+        mtime_step = workflow.index("Establish the base source mtime identity")
+        build_step = workflow.index("Build the shared base seed")
+        self.assertLess(mtime_step, build_step)
+        self.assertIn(
+            "node ./scripts/run-deno-mtime-cache.js ./upstream", workflow
+        )
+        self.assertIn("test -s upstream/target/.mtime-cache-db.json", workflow)
+
+
 class SccacheStatsTest(unittest.TestCase):
     def test_parses_hit_rate(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -115,7 +115,9 @@ cold build on a wrapper-consistent target seed.
 The **Deno release sccache plus target cohort** is the paired follow-up. One
 base build uses sccache's documented disk-plus-WebDAV chain so the same compiler
 outputs populate both BoringCache and a local disk cache, then snapshots the
-same Cargo and target state into both archive products. Fresh rolling jobs keep
+same Cargo and target state into both archive products. The seed and both
+rolling jobs run Deno's own mtime action, so unchanged source identities line
+up with the restored target fingerprints. Fresh rolling jobs keep
 `RUSTC_WRAPPER`, `CC`, `CXX`, and incremental settings identical while comparing
 BoringCache's eagerly warmed remote sccache with the Actions-archived local
 sccache. The report refuses to compare different runner image releases, CPU
