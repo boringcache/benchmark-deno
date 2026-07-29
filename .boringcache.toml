@@ -40,6 +40,15 @@ entries = [
   "actions-target",
 ]
 
+[profiles.target-only]
+entries = ["actions-target"]
+
+# Adapter-only control used when another product owns the target archive. This
+# keeps BoringCache's sccache transport identical while changing only the
+# target materialization path.
+[profiles.sccache-only]
+entries = []
+
 [adapters.sccache]
 tag = "deno-rust-cache-local"
 command = ["./scripts/run-deno-build.sh"]

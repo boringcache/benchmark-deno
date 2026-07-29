@@ -24,6 +24,8 @@ write_phase_result = load_script("write_phase_result.py")
 render_comparison = load_script("render_comparison.py")
 compare_rolling_controls = load_script("compare_rolling_controls.py")
 verify_restored_freshness = load_script("verify_restored_freshness.py")
+snapshot_target_state = load_script("snapshot_target_state.py")
+compare_target_snapshots = load_script("compare_target_snapshots.py")
 
 
 class SccacheTargetCohortWorkflowTest(unittest.TestCase):
@@ -68,6 +70,21 @@ class SccacheTargetCohortWorkflowTest(unittest.TestCase):
         self.assertNotIn("~/.cargo/.crates.toml", workflow)
         self.assertNotIn("~/.cargo/.crates2.json", workflow)
 
+    def test_restores_the_same_actions_cache_version_and_prepares_cargo_bin(self):
+        workflow = (
+            ROOT / ".github/workflows/deno-release-sccache-target-cohort.yml"
+        ).read_text()
+
+        for pattern in (
+            "!upstream/target/*/gn_out",
+            "!upstream/target/*/gn_root",
+            "!upstream/target/*/*.zip",
+            "!upstream/target/*/*.tar.gz",
+        ):
+            self.assertEqual(workflow.count(pattern), 2)
+        self.assertIn("Prepare exact Cargo bin restore destination", workflow)
+        self.assertIn('find "${HOME}/.cargo/bin"', workflow)
+
     def test_action_post_owns_the_seed_sccache_shutdown(self):
         workflow = (
             ROOT / ".github/workflows/deno-release-sccache-target-cohort.yml"
@@ -83,6 +100,93 @@ class SccacheTargetCohortWorkflowTest(unittest.TestCase):
 
         self.assertIn('test -x "$HOME/.local/bin/sccache"', workflow)
         self.assertNotIn('cp "$(command -v sccache)"', workflow)
+
+
+class TargetTransportWorkflowTest(unittest.TestCase):
+    def test_changes_only_the_target_transport(self):
+        workflow = (
+            ROOT / ".github/workflows/deno-release-target-transport-control.yml"
+        ).read_text()
+
+        self.assertIn("Actions target plus BoringCache sccache", workflow)
+        self.assertIn("BoringCache target plus BoringCache sccache", workflow)
+        self.assertEqual(workflow.count("run: ./scripts/configure-sccache-cohort.sh webdav"), 1)
+        self.assertIn("cache_profile: sccache-only", workflow)
+        self.assertIn("cache_profile: target-only", workflow)
+        self.assertIn("Restore the same Cargo state through Actions/cache", workflow)
+        self.assertIn("Save the shared Cargo Actions control archive", workflow)
+        self.assertNotIn("configure-sccache-cohort.sh disk\n", workflow)
+        self.assertNotIn("~/.cache/sccache\n          fail-on-cache-miss", workflow)
+
+    def test_reuses_the_canonical_seed_without_another_cold_build(self):
+        workflow = (
+            ROOT / ".github/workflows/deno-release-target-transport-control.yml"
+        ).read_text()
+
+        self.assertIn("inputs.seed_run_id", workflow)
+        self.assertIn("Derive the target-only Actions archive", workflow)
+        self.assertEqual(workflow.count("./scripts/run-deno-build.sh"), 1)
+        self.assertIn("snapshot_target_state.py", workflow)
+        self.assertIn("compare_target_snapshots.py", workflow)
+        self.assertIn("run_build:", workflow)
+        self.assertIn("default: false", workflow)
+        self.assertIn("if: inputs.run_build", workflow)
+
+
+class TargetSnapshotTest(unittest.TestCase):
+    def test_proves_target_contents_and_metadata_are_identical(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            actions = root / "actions"
+            boringcache = root / "boringcache"
+            actions.mkdir()
+            boringcache.mkdir()
+            for target in (actions, boringcache):
+                artifact = target / "release" / "artifact.rlib"
+                artifact.parent.mkdir()
+                artifact.write_bytes(b"same artifact")
+                os.chmod(artifact, 0o640)
+                os.utime(
+                    artifact,
+                    ns=(1_700_000_000_125_000_000, 1_700_000_000_125_000_000),
+                )
+                (target / "link").symlink_to("release/artifact.rlib")
+                for path in (target / "release", target / "link"):
+                    os.utime(
+                        path,
+                        ns=(
+                            1_700_000_000_125_000_000,
+                            1_700_000_000_125_000_000,
+                        ),
+                        follow_symlinks=False,
+                    )
+
+            left = snapshot_target_state.snapshot(actions)
+            right = snapshot_target_state.snapshot(boringcache)
+            comparison = compare_target_snapshots.compare(left, right)
+
+            self.assertTrue(comparison["exact_match"])
+            self.assertEqual(left["entries_sha256"], right["entries_sha256"])
+
+    def test_names_the_target_entry_that_differs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            actions = root / "actions"
+            boringcache = root / "boringcache"
+            actions.mkdir()
+            boringcache.mkdir()
+            (actions / "artifact").write_text("actions")
+            (boringcache / "artifact").write_text("boringcache")
+
+            comparison = compare_target_snapshots.compare(
+                snapshot_target_state.snapshot(actions),
+                snapshot_target_state.snapshot(boringcache),
+            )
+
+            self.assertFalse(comparison["exact_match"])
+            self.assertEqual(comparison["different_entries_count"], 1)
+            self.assertEqual(comparison["differences"][0]["path"], "artifact")
+            self.assertIn("sha256", comparison["differences"][0]["fields"])
 
 
 class SccacheStatsTest(unittest.TestCase):
