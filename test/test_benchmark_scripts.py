@@ -68,6 +68,14 @@ class SccacheTargetCohortWorkflowTest(unittest.TestCase):
         self.assertNotIn("~/.cargo/.crates.toml", workflow)
         self.assertNotIn("~/.cargo/.crates2.json", workflow)
 
+    def test_action_post_owns_the_seed_sccache_shutdown(self):
+        workflow = (
+            ROOT / ".github/workflows/deno-release-sccache-target-cohort.yml"
+        ).read_text()
+
+        self.assertNotIn("sccache --stop-server", workflow)
+        self.assertNotIn("sccache --start-server", workflow)
+
 
 class SccacheStatsTest(unittest.TestCase):
     def test_parses_hit_rate(self):

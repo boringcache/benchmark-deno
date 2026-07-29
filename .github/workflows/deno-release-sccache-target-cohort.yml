@@ -139,9 +139,6 @@ jobs:
           cp "$(command -v sccache)" "$HOME/.local/bin/sccache"
           chmod +x "$HOME/.local/bin/sccache"
 
-      - name: Flush local sccache before archiving
-        run: sccache --stop-server >/dev/null
-
       - name: Save the Actions target and local sccache archive
         uses: actions/cache/save@v5
         with:
@@ -156,9 +153,6 @@ jobs:
             !upstream/target/*/gn_root
             !upstream/target/*/*.zip
             !upstream/target/*/*.tar.gz
-
-      - name: Restart sccache for managed shutdown
-        run: sccache --start-server >/dev/null
 
       - name: Capture shared seed identities
         id: identity
