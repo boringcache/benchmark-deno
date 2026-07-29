@@ -147,12 +147,8 @@ jobs:
         with:
           key: gha-deno-release-sccache-target-r${{ github.run_id }}-a${{ github.run_attempt }}-base
           path: |
-            ~/.cargo/.crates.toml
-            ~/.cargo/.crates2.json
             ~/.cargo/bin
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
+            ~/.cargo/registry
             ~/.cache/sccache
             ~/.local/bin/sccache
             upstream/target
@@ -237,12 +233,8 @@ jobs:
         with:
           key: ${{ needs.seed.outputs.actions_cache_key }}
           path: |
-            ~/.cargo/.crates.toml
-            ~/.cargo/.crates2.json
             ~/.cargo/bin
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
+            ~/.cargo/registry
             ~/.cache/sccache
             ~/.local/bin/sccache
             upstream/target
