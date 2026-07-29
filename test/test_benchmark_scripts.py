@@ -229,6 +229,11 @@ class RollingControlComparisonTest(unittest.TestCase):
                 "image_version": "20260720.247.2",
                 "architecture": "X64",
                 "os": "Linux",
+                "hardware": {
+                    "cpu_model": "AMD EPYC 7763",
+                    "logical_cores": 4,
+                    "memory_class_gib": 16,
+                },
             },
             "compiler_environment": {"sha256": "compiler-env"},
             "timing": {
@@ -275,6 +280,11 @@ class RollingControlComparisonTest(unittest.TestCase):
                 "image_version": "20260720.247.2",
                 "architecture": "X64",
                 "os": "Linux",
+                "hardware": {
+                    "cpu_model": "AMD EPYC 7763",
+                    "logical_cores": 4,
+                    "memory_class_gib": 16,
+                },
             },
             "compiler_environment": {"sha256": "compiler-env"},
             "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
@@ -300,6 +310,11 @@ class RollingControlComparisonTest(unittest.TestCase):
                 "image_version": "20260720.247.2",
                 "architecture": "X64",
                 "os": "Linux",
+                "hardware": {
+                    "cpu_model": "AMD EPYC 7763",
+                    "logical_cores": 4,
+                    "memory_class_gib": 16,
+                },
             },
             "compiler_environment": {"sha256": "compiler-env"},
             "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
@@ -325,6 +340,11 @@ class RollingControlComparisonTest(unittest.TestCase):
                 "image_version": "20260720.247.2",
                 "architecture": "X64",
                 "os": "Linux",
+                "hardware": {
+                    "cpu_model": "AMD EPYC 7763",
+                    "logical_cores": 4,
+                    "memory_class_gib": 16,
+                },
             },
             "compiler_environment": {"sha256": "compiler-env"},
             "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
@@ -350,6 +370,11 @@ class RollingControlComparisonTest(unittest.TestCase):
                 "image_version": "20260720.247.2",
                 "architecture": "X64",
                 "os": "Linux",
+                "hardware": {
+                    "cpu_model": "AMD EPYC 7763",
+                    "logical_cores": 4,
+                    "memory_class_gib": 16,
+                },
             },
             "compiler_environment": {"sha256": "baseline-env"},
             "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
@@ -360,6 +385,42 @@ class RollingControlComparisonTest(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "Mismatched compiler environment identity"):
+            compare_rolling_controls.compare(baseline, candidate, "Control")
+
+    def test_rejects_a_different_runner_cpu(self):
+        baseline = {
+            "benchmark": "deno-release-rust-cache",
+            "phase": "rolling",
+            "project": {"repository": "denoland/deno", "source_sha": "head"},
+            "workload": {"build_profile": "release"},
+            "product": {"cli_version": "v1.15.0", "action_sha": "release-sha"},
+            "runner": {
+                "provider": "github-actions",
+                "image": "ubuntu24",
+                "image_version": "20260720.247.2",
+                "architecture": "X64",
+                "os": "Linux",
+                "hardware": {
+                    "cpu_model": "AMD EPYC 7763",
+                    "logical_cores": 4,
+                    "memory_class_gib": 16,
+                },
+            },
+            "compiler_environment": {"sha256": "compiler-env"},
+            "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
+        }
+        candidate = {
+            **baseline,
+            "runner": {
+                **baseline["runner"],
+                "hardware": {
+                    **baseline["runner"]["hardware"],
+                    "cpu_model": "Intel Xeon Platinum 8370C",
+                },
+            },
+        }
+
+        with self.assertRaisesRegex(ValueError, "Mismatched runner hardware cpu_model"):
             compare_rolling_controls.compare(baseline, candidate, "Control")
 
 
