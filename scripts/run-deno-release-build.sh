@@ -8,7 +8,7 @@ export CARGO_INCREMENTAL=0
 export DENO_CANARY=true
 export DENO_SNAPSHOT_MINIFY_SOURCES=1
 
-cargo build --release --locked \
+"${repo_root}/scripts/run-cargo-build.sh" --release --locked \
   -p deno \
   -p denort \
   -p test_server \
@@ -17,7 +17,6 @@ cargo build --release --locked \
   --bin test_server \
   --features=deno/panic-trace
 
-cargo build --release --locked -p denort_desktop
+"${repo_root}/scripts/run-cargo-build.sh" --release --locked -p denort_desktop
 
 target/release/deno --version
-

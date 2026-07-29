@@ -10,7 +10,7 @@ BoringCache candidates:
 - the same promoted Cargo and full-`target/` archive contents plus remote
   sccache, as a migration control that does not repeat the cold build
 
-Stable proof runs pin `boringcache/one` `v1.14.0` by immutable commit and keep
+Stable proof runs pin `boringcache/one` `v1.15.0` by immutable commit and keep
 Rust installation in the host workflow. Canary runs require an exact immutable
 CLI tag.
 
@@ -36,6 +36,8 @@ The proof reports the parts needed to answer that honestly:
 - restore-plus-build time
 - base cache storage
 - native `sccache` hits, misses, and non-cacheable compilations
+- Deno mtime-cache counters, exact restored source mtimes, and Cargo's own
+  fresh-versus-rebuilt target decisions for the full-target control
 
 It does not claim that compiler caching accelerates Deno's startup-order trace
 or second ThinLTO relink. Those stages are deliberately excluded and called out
@@ -92,7 +94,9 @@ their actual contents into BoringCache archive entries, and reuses that proof's
 run-scoped sccache tag. Its fresh rolling runner restores all three surfaces,
 applies Deno's mtime action, and builds the same pinned head commit. The
 promoted base artifact records zero build seconds so it cannot be mistaken for
-a second cold sample.
+a second cold sample. The rolling gate fails unless Deno reports restored,
+non-invalid timestamps, those timestamps match the filesystem exactly, and
+Cargo's JSON messages contain both accepted-fresh and rebuilt targets.
 
 ## Run it
 

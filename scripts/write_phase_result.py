@@ -35,6 +35,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-import-status", default="")
     parser.add_argument("--sccache-stats-file")
     parser.add_argument("--require-sccache-evidence", action="store_true")
+    parser.add_argument("--freshness-evidence-file")
+    parser.add_argument("--require-freshness-evidence", action="store_true")
     parser.add_argument("--cli-version", required=True)
     parser.add_argument("--action-sha", required=True)
     parser.add_argument("--output-dir", default="benchmark-results")
@@ -125,6 +127,20 @@ def main() -> int:
         if "cache_hits" not in sccache or "cache_misses" not in sccache:
             raise ValueError("Required sccache hit/miss evidence is missing")
 
+    freshness_path = (
+        Path(args.freshness_evidence_file) if args.freshness_evidence_file else None
+    )
+    if freshness_path is not None and not freshness_path.is_file():
+        raise FileNotFoundError(freshness_path)
+    freshness = json.loads(freshness_path.read_text()) if freshness_path else None
+    if args.require_freshness_evidence:
+        if not freshness or freshness.get("schema_version") != "deno_target_freshness.v1":
+            raise ValueError("Required Deno target freshness evidence is missing")
+        if not freshness.get("mtime", {}).get("exact_restored_entries"):
+            raise ValueError("Required exact restored mtime evidence is missing")
+        if not freshness.get("cargo", {}).get("fresh_targets"):
+            raise ValueError("Required Cargo fresh-target evidence is missing")
+
     cache_components = [
         component.strip()
         for component in args.cache_components.split(",")
@@ -178,6 +194,7 @@ def main() -> int:
             if sccache is not None
             else None
         ),
+        "target_freshness": freshness,
         "runner": {
             "provider": "github-actions",
             "image": os.environ.get("ImageOS"),
