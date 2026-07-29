@@ -51,8 +51,11 @@ def compare(
         candidate_value = candidate.get("runner", {}).get("hardware", {}).get(field)
         if baseline_value is None or candidate_value is None:
             raise ValueError(f"Missing runner hardware {field}")
-        if baseline_value != candidate_value:
+        if field != "cpu_model" and baseline_value != candidate_value:
             raise ValueError(f"Mismatched runner hardware {field}")
+
+    baseline_cpu = baseline["runner"]["hardware"]["cpu_model"]
+    candidate_cpu = candidate["runner"]["hardware"]["cpu_model"]
 
     baseline_compiler = baseline.get("compiler_environment", {}).get("sha256")
     candidate_compiler = candidate.get("compiler_environment", {}).get("sha256")
@@ -70,6 +73,11 @@ def compare(
         "schema_version": 1,
         "title": title,
         "benchmark": baseline["benchmark"],
+        "comparability": {
+            "cpu_model_matched": baseline_cpu == candidate_cpu,
+            "baseline_cpu_model": baseline_cpu,
+            "candidate_cpu_model": candidate_cpu,
+        },
         "baseline": baseline,
         "candidate": candidate,
         "comparison": {
@@ -103,11 +111,21 @@ def render_markdown(payload: dict[str, Any]) -> str:
     baseline_sccache = baseline.get("sccache") or {}
     candidate_sccache = candidate.get("sccache") or {}
     saved = comparison["end_to_end_seconds_saved"]
-    verdict = (
-        f"Candidate saved **{saved}s ({comparison['percent_saved']}%)**."
-        if saved >= 0
-        else f"Candidate was **{-saved}s slower ({-comparison['percent_saved']}%)**."
-    )
+    cpu_models_match = payload["comparability"]["cpu_model_matched"]
+    if cpu_models_match:
+        verdict = (
+            f"Candidate saved **{saved}s ({comparison['percent_saved']}%)**."
+            if saved >= 0
+            else f"Candidate was **{-saved}s slower ({-comparison['percent_saved']}%)**."
+        )
+    else:
+        direction = "faster" if saved >= 0 else "slower"
+        verdict = (
+            f"Candidate was observed **{abs(saved)}s {direction} "
+            f"({abs(comparison['percent_saved'])}%)**, but build and end-to-end "
+            "differences are not attributable to cache transport because GitHub "
+            "assigned different CPU models."
+        )
     return "\n".join(
         [
             f"# {payload['title']}",
@@ -118,6 +136,12 @@ def render_markdown(payload: dict[str, Any]) -> str:
             f"| {candidate['strategy']} | {candidate['timing']['restore_seconds']}s | {candidate['timing']['build_seconds']}s | {candidate['timing']['end_to_end_seconds']}s |",
             "",
             verdict,
+            "",
+            "## Comparability",
+            "",
+            f"- Baseline CPU: {payload['comparability']['baseline_cpu_model']}",
+            f"- Candidate CPU: {payload['comparability']['candidate_cpu_model']}",
+            f"- CPU model matched: {'yes' if cpu_models_match else 'no'}",
             "",
             "## Native and target work",
             "",
