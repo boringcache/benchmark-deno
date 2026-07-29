@@ -132,6 +132,23 @@ class TargetTransportWorkflowTest(unittest.TestCase):
         self.assertIn("default: false", workflow)
         self.assertIn("if: inputs.run_build", workflow)
 
+    def test_phase_writer_accepts_both_target_transport_strategies(self):
+        self.assertTrue(
+            {
+                "actions-target-boringcache-sccache",
+                "boringcache-target-boringcache-sccache",
+            }.issubset(write_phase_result.STRATEGIES)
+        )
+
+    def test_uploads_expensive_raw_evidence_before_rendering(self):
+        workflow = (
+            ROOT / ".github/workflows/deno-release-target-transport-control.yml"
+        ).read_text()
+
+        raw_upload = workflow.index("Upload raw rolling-build evidence")
+        result_writer = workflow.index("Write target transport result")
+        self.assertLess(raw_upload, result_writer)
+
 
 class TargetSnapshotTest(unittest.TestCase):
     def test_proves_target_contents_and_metadata_are_identical(self):

@@ -10,18 +10,23 @@ from pathlib import Path
 from typing import Any
 
 
+STRATEGIES = (
+    "actions-cache",
+    "actions-target-boringcache-sccache",
+    "boringcache",
+    "boringcache-hybrid",
+    "boringcache-full-target",
+    "boringcache-target-boringcache-sccache",
+    "boringcache-target-only",
+)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--strategy",
         required=True,
-        choices=(
-            "actions-cache",
-            "boringcache",
-            "boringcache-hybrid",
-            "boringcache-full-target",
-            "boringcache-target-only",
-        ),
+        choices=STRATEGIES,
     )
     parser.add_argument("--benchmark", required=True)
     parser.add_argument("--build-profile", required=True, choices=("release", "debug"))
