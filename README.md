@@ -2,13 +2,15 @@
 
 Reproducible Linux x86 release and debug build proofs for
 [`denoland/deno`](https://github.com/denoland/deno). It compares Deno's current
-GitHub Actions `target/` archive strategy with three deliberately separate
+GitHub Actions `target/` archive strategy with deliberately separate
 BoringCache candidates:
 
 - remote sccache plus only the capped release ThinLTO archive
 - remote sccache alone for Deno's ordinary Linux debug build
 - the same promoted Cargo and full-`target/` archive contents plus remote
   sccache, as a migration control that does not repeat the cold build
+- a same-seed cohort that combines persistent `target/` with sccache on both
+  sides and changes only archived-local versus eagerly warmed remote storage
 
 Stable proof runs pin `boringcache/one` `v1.15.0` by immutable commit and keep
 Rust installation in the host workflow. Canary runs require an exact immutable
@@ -30,6 +32,9 @@ For a normal adjacent Deno commit on a fresh runner:
    path?
 4. If a promoted target was seeded without `RUSTC_WRAPPER`, how much rolling
    work comes from enabling sccache after restore rather than archive transport?
+5. When one compiler environment seeds both products, how does an Actions
+   archive containing local sccache plus `target/` compare with BoringCache's
+   explicit `full-target` profile plus remote sccache adapter?
 
 The proof reports the parts needed to answer that honestly:
 
@@ -104,8 +109,17 @@ The focused **Deno release target identity control** restores that same
 promoted BoringCache target archive but deliberately leaves `RUSTC_WRAPPER`
 unset. It records the same exact-mtime and Cargo freshness evidence and compares
 against the source Actions rolling artifact. This isolates archive transport
-from compiler-wrapper fingerprint churn before spending another cold build on
-a wrapper-consistent target seed or an Actions-archived local sccache directory.
+from adapter-environment and native-wrapper overhead before spending another
+cold build on a wrapper-consistent target seed.
+
+The **Deno release sccache plus target cohort** is the paired follow-up. One
+base build uses sccache's documented disk-plus-WebDAV chain so the same compiler
+outputs populate both BoringCache and a local disk cache, then snapshots the
+same Cargo and target state into both archive products. Fresh rolling jobs keep
+`RUSTC_WRAPPER`, `CC`, `CXX`, and incremental settings identical while comparing
+BoringCache's eagerly warmed remote sccache with the Actions-archived local
+sccache. The report refuses to compare different runner image releases and
+includes exact target freshness plus native hit/miss counts.
 
 ## Run it
 
@@ -114,15 +128,20 @@ The repository needs these Actions secrets:
 - `BORINGCACHE_RESTORE_TOKEN`
 - `BORINGCACHE_SAVE_TOKEN`
 
-Run **Deno release hybrid cache proof**, **Deno Linux debug cache proof**, or
-either full-target proof from the Actions tab. The optional `cli_version` input
-can pin a canary CLI release. Full-target proofs also require the completed
-source proof run ID whose seed and Actions result should be reused. Each proof
-publishes one comparison table and JSON artifact.
+Run **Deno release hybrid cache proof**, **Deno Linux debug cache proof**,
+either full-target proof, or **Deno release sccache plus target cohort** from
+the Actions tab. The optional `cli_version` input can pin a canary CLI release.
+Full-target proofs also require the completed source proof run ID whose seed
+and Actions result should be reused. Each proof publishes one comparison table
+and JSON artifact.
 
 The target identity control additionally takes the completed full-target run
 that owns the promoted archive and the source run that owns the paired Actions
 baseline. It never publishes or mutates cache state.
+
+The sccache-plus-target cohort takes only the CLI release. It creates run-scoped
+seed state for both products from one build and never falls back to historical
+target or sccache generations.
 
 ## Interpreting the result
 

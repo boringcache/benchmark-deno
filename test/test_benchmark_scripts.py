@@ -226,9 +226,11 @@ class RollingControlComparisonTest(unittest.TestCase):
             "runner": {
                 "provider": "github-actions",
                 "image": "ubuntu24",
+                "image_version": "20260720.247.2",
                 "architecture": "X64",
                 "os": "Linux",
             },
+            "compiler_environment": {"sha256": "compiler-env"},
             "timing": {
                 "restore_seconds": 108,
                 "build_seconds": 1379,
@@ -270,9 +272,11 @@ class RollingControlComparisonTest(unittest.TestCase):
             "runner": {
                 "provider": "github-actions",
                 "image": "ubuntu24",
+                "image_version": "20260720.247.2",
                 "architecture": "X64",
                 "os": "Linux",
             },
+            "compiler_environment": {"sha256": "compiler-env"},
             "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
         }
         candidate = {
@@ -293,9 +297,11 @@ class RollingControlComparisonTest(unittest.TestCase):
             "runner": {
                 "provider": "github-actions",
                 "image": "ubuntu24",
+                "image_version": "20260720.247.2",
                 "architecture": "X64",
                 "os": "Linux",
             },
+            "compiler_environment": {"sha256": "compiler-env"},
             "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
         }
         candidate = {
@@ -304,6 +310,56 @@ class RollingControlComparisonTest(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "Mismatched product cli_version"):
+            compare_rolling_controls.compare(baseline, candidate, "Control")
+
+    def test_rejects_a_different_runner_image_release(self):
+        baseline = {
+            "benchmark": "deno-release-rust-cache",
+            "phase": "rolling",
+            "project": {"repository": "denoland/deno", "source_sha": "head"},
+            "workload": {"build_profile": "release"},
+            "product": {"cli_version": "v1.15.0", "action_sha": "release-sha"},
+            "runner": {
+                "provider": "github-actions",
+                "image": "ubuntu24",
+                "image_version": "20260720.247.2",
+                "architecture": "X64",
+                "os": "Linux",
+            },
+            "compiler_environment": {"sha256": "compiler-env"},
+            "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
+        }
+        candidate = {
+            **baseline,
+            "runner": {**baseline["runner"], "image_version": "20260726.254.1"},
+        }
+
+        with self.assertRaisesRegex(ValueError, "Mismatched runner image_version"):
+            compare_rolling_controls.compare(baseline, candidate, "Control")
+
+    def test_rejects_a_different_compiler_environment(self):
+        baseline = {
+            "benchmark": "deno-release-rust-cache",
+            "phase": "rolling",
+            "project": {"repository": "denoland/deno", "source_sha": "head"},
+            "workload": {"build_profile": "release"},
+            "product": {"cli_version": "v1.15.0", "action_sha": "release-sha"},
+            "runner": {
+                "provider": "github-actions",
+                "image": "ubuntu24",
+                "image_version": "20260720.247.2",
+                "architecture": "X64",
+                "os": "Linux",
+            },
+            "compiler_environment": {"sha256": "baseline-env"},
+            "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
+        }
+        candidate = {
+            **baseline,
+            "compiler_environment": {"sha256": "candidate-env"},
+        }
+
+        with self.assertRaisesRegex(ValueError, "Mismatched compiler environment identity"):
             compare_rolling_controls.compare(baseline, candidate, "Control")
 
 

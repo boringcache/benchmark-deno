@@ -38,11 +38,20 @@ def compare(
             field
         ):
             raise ValueError(f"Mismatched product {field}")
-    for field in ("provider", "image", "architecture", "os"):
-        if baseline.get("runner", {}).get(field) != candidate.get("runner", {}).get(
-            field
-        ):
+    for field in ("provider", "image", "image_version", "architecture", "os"):
+        baseline_value = baseline.get("runner", {}).get(field)
+        candidate_value = candidate.get("runner", {}).get(field)
+        if field == "image_version" and (not baseline_value or not candidate_value):
+            raise ValueError("Missing runner image_version")
+        if baseline_value != candidate_value:
             raise ValueError(f"Mismatched runner {field}")
+
+    baseline_compiler = baseline.get("compiler_environment", {}).get("sha256")
+    candidate_compiler = candidate.get("compiler_environment", {}).get("sha256")
+    if not baseline_compiler or not candidate_compiler:
+        raise ValueError("Missing compiler environment identity")
+    if baseline_compiler != candidate_compiler:
+        raise ValueError("Mismatched compiler environment identity")
 
     baseline_timing = baseline["timing"]
     candidate_timing = candidate["timing"]
@@ -78,9 +87,13 @@ def render_markdown(payload: dict[str, Any]) -> str:
     baseline = payload["baseline"]
     candidate = payload["candidate"]
     comparison = payload["comparison"]
+    baseline_freshness = baseline.get("target_freshness") or {}
     freshness = candidate.get("target_freshness") or {}
+    baseline_cargo = baseline_freshness.get("cargo") or {}
     cargo = freshness.get("cargo") or {}
     mtime = freshness.get("mtime") or {}
+    baseline_sccache = baseline.get("sccache") or {}
+    candidate_sccache = candidate.get("sccache") or {}
     saved = comparison["end_to_end_seconds_saved"]
     verdict = (
         f"Candidate saved **{saved}s ({comparison['percent_saved']}%)**."
@@ -97,6 +110,13 @@ def render_markdown(payload: dict[str, Any]) -> str:
             f"| {candidate['strategy']} | {candidate['timing']['restore_seconds']}s | {candidate['timing']['build_seconds']}s | {candidate['timing']['end_to_end_seconds']}s |",
             "",
             verdict,
+            "",
+            "## Native and target work",
+            "",
+            "| Strategy | sccache hits | sccache misses | Cargo-fresh | Rebuilt |",
+            "|---|---:|---:|---:|---:|",
+            f"| {baseline['strategy']} | {baseline_sccache.get('cache_hits', 'n/a')} | {baseline_sccache.get('cache_misses', 'n/a')} | {baseline_cargo.get('fresh_targets', 'n/a')} | {baseline_cargo.get('rebuilt_targets', 'n/a')} |",
+            f"| {candidate['strategy']} | {candidate_sccache.get('cache_hits', 'n/a')} | {candidate_sccache.get('cache_misses', 'n/a')} | {cargo.get('fresh_targets', 'n/a')} | {cargo.get('rebuilt_targets', 'n/a')} |",
             "",
             "## Candidate freshness",
             "",
