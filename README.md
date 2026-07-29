@@ -28,6 +28,8 @@ For a normal adjacent Deno commit on a fresh runner:
 3. When BoringCache restores the existing full target state as well as
    sccache, does the complete migration beat the Actions restore-plus-build
    path?
+4. If a promoted target was seeded without `RUSTC_WRAPPER`, how much rolling
+   work comes from enabling sccache after restore rather than archive transport?
 
 The proof reports the parts needed to answer that honestly:
 
@@ -98,6 +100,13 @@ a second cold sample. The rolling gate fails unless Deno reports restored,
 non-invalid timestamps, those timestamps match the filesystem exactly, and
 Cargo's JSON messages contain both accepted-fresh and rebuilt targets.
 
+The focused **Deno release target identity control** restores that same
+promoted BoringCache target archive but deliberately leaves `RUSTC_WRAPPER`
+unset. It records the same exact-mtime and Cargo freshness evidence and compares
+against the source Actions rolling artifact. This isolates archive transport
+from compiler-wrapper fingerprint churn before spending another cold build on
+a wrapper-consistent target seed or an Actions-archived local sccache directory.
+
 ## Run it
 
 The repository needs these Actions secrets:
@@ -110,6 +119,10 @@ either full-target proof from the Actions tab. The optional `cli_version` input
 can pin a canary CLI release. Full-target proofs also require the completed
 source proof run ID whose seed and Actions result should be reused. Each proof
 publishes one comparison table and JSON artifact.
+
+The target identity control additionally takes the completed full-target run
+that owns the promoted archive and the source run that owns the paired Actions
+baseline. It never publishes or mutates cache state.
 
 ## Interpreting the result
 

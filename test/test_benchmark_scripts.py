@@ -22,6 +22,7 @@ def load_script(name: str):
 
 write_phase_result = load_script("write_phase_result.py")
 render_comparison = load_script("render_comparison.py")
+compare_rolling_controls = load_script("compare_rolling_controls.py")
 verify_restored_freshness = load_script("verify_restored_freshness.py")
 
 
@@ -208,6 +209,102 @@ class ComparisonReportTest(unittest.TestCase):
 
         self.assertEqual(payload["candidate_strategy"], "boringcache-hybrid")
         self.assertIn("Deno release hybrid", render_comparison.render_markdown(payload))
+
+
+class RollingControlComparisonTest(unittest.TestCase):
+    def test_compares_matching_rolling_cohorts_and_renders_freshness(self):
+        baseline = {
+            "benchmark": "deno-release-rust-cache",
+            "strategy": "actions-cache",
+            "phase": "rolling",
+            "project": {"repository": "denoland/deno", "source_sha": "head"},
+            "workload": {
+                "build_profile": "release",
+                "command": "./scripts/run-deno-release-build.sh",
+            },
+            "product": {"cli_version": "v1.15.0", "action_sha": "release-sha"},
+            "runner": {
+                "provider": "github-actions",
+                "image": "ubuntu24",
+                "architecture": "X64",
+                "os": "Linux",
+            },
+            "timing": {
+                "restore_seconds": 108,
+                "build_seconds": 1379,
+                "end_to_end_seconds": 1487,
+            },
+        }
+        candidate = {
+            **baseline,
+            "strategy": "boringcache-target-only",
+            "timing": {
+                "restore_seconds": 80,
+                "build_seconds": 1380,
+                "end_to_end_seconds": 1460,
+            },
+            "target_freshness": {
+                "mtime": {
+                    "exact_restored_entries": 14660,
+                    "mismatched_entries": 0,
+                },
+                "cargo": {"fresh_targets": 990, "rebuilt_targets": 4},
+            },
+        }
+
+        payload = compare_rolling_controls.compare(baseline, candidate, "Control")
+        markdown = compare_rolling_controls.render_markdown(payload)
+
+        self.assertEqual(payload["comparison"]["build_seconds_saved"], -1)
+        self.assertEqual(payload["comparison"]["end_to_end_seconds_saved"], 27)
+        self.assertIn("Exact restored mtimes: 14660", markdown)
+        self.assertIn("Candidate saved **27s (1.8%)**", markdown)
+
+    def test_rejects_a_different_source_cohort(self):
+        baseline = {
+            "benchmark": "deno-release-rust-cache",
+            "phase": "rolling",
+            "project": {"repository": "denoland/deno", "source_sha": "a"},
+            "workload": {"build_profile": "release"},
+            "product": {"cli_version": "v1.15.0", "action_sha": "release-sha"},
+            "runner": {
+                "provider": "github-actions",
+                "image": "ubuntu24",
+                "architecture": "X64",
+                "os": "Linux",
+            },
+            "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
+        }
+        candidate = {
+            **baseline,
+            "project": {"repository": "denoland/deno", "source_sha": "b"},
+        }
+
+        with self.assertRaisesRegex(ValueError, "Mismatched project cohort"):
+            compare_rolling_controls.compare(baseline, candidate, "Control")
+
+    def test_rejects_a_different_product_release(self):
+        baseline = {
+            "benchmark": "deno-release-rust-cache",
+            "phase": "rolling",
+            "project": {"repository": "denoland/deno", "source_sha": "head"},
+            "workload": {"build_profile": "release"},
+            "product": {"cli_version": "v1.15.0", "action_sha": "release-sha"},
+            "runner": {
+                "provider": "github-actions",
+                "image": "ubuntu24",
+                "architecture": "X64",
+                "os": "Linux",
+            },
+            "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
+        }
+        candidate = {
+            **baseline,
+            "product": {"cli_version": "v1.15.1", "action_sha": "release-sha"},
+        }
+
+        with self.assertRaisesRegex(ValueError, "Mismatched product cli_version"):
+            compare_rolling_controls.compare(baseline, candidate, "Control")
 
 
 if __name__ == "__main__":
