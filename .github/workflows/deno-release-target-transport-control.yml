@@ -23,6 +23,11 @@ on:
         required: true
         default: false
         type: boolean
+      evidence_run_id:
+        description: Optional completed control run to render without repeating its builds.
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: write
@@ -37,6 +42,7 @@ env:
 jobs:
   promote-actions-target:
     name: Derive the target-only Actions archive from the canonical seed
+    if: inputs.evidence_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
@@ -112,6 +118,7 @@ jobs:
   rolling:
     name: ${{ matrix.label }}
     needs: promote-actions-target
+    if: inputs.evidence_run_id == '' && needs.promote-actions-target.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -339,7 +346,7 @@ jobs:
   compare:
     name: Compare target transports with sccache held constant
     needs: rolling
-    if: always() && needs.rolling.result == 'success'
+    if: always() && (needs.rolling.result == 'success' || inputs.evidence_run_id != '')
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout benchmark repository
@@ -351,20 +358,26 @@ jobs:
           pattern: phase-${{ env.BENCHMARK_ID }}-*-target-boringcache-sccache
           path: benchmark-results
           merge-multiple: true
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run_id != '' && inputs.evidence_run_id || github.run_id }}
 
       - name: Download canonical seed identity
         uses: actions/download-artifact@v8
         with:
           name: deno-target-transport-canonical-seed
           path: benchmark-results
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run_id != '' && inputs.evidence_run_id || github.run_id }}
 
       - name: Download optional rolling-build evidence
-        if: inputs.run_build
+        if: inputs.run_build || inputs.evidence_run_id != ''
         uses: actions/download-artifact@v8
         with:
           pattern: build-${{ env.BENCHMARK_ID }}-*-target-boringcache-sccache
           path: benchmark-results
           merge-multiple: true
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run_id != '' && inputs.evidence_run_id || github.run_id }}
 
       - name: Prove restored target identity
         run: |
@@ -382,11 +395,15 @@ jobs:
             --output benchmark-results/canonical-boringcache-target-comparison.json
 
       - name: Render target transport comparison
-        if: inputs.run_build
+        if: inputs.run_build || inputs.evidence_run_id != ''
         run: |
+          baseline="$(find benchmark-results -type f -name 'actions-target-boringcache-sccache-rolling.json' -print -quit)"
+          candidate="$(find benchmark-results -type f -name 'boringcache-target-boringcache-sccache-rolling.json' -print -quit)"
+          [[ -n "$baseline" ]] || { echo "Missing Actions target result" >&2; exit 1; }
+          [[ -n "$candidate" ]] || { echo "Missing BoringCache target result" >&2; exit 1; }
           ./scripts/compare_rolling_controls.py \
-            --baseline benchmark-results/actions-target-boringcache-sccache-rolling.json \
-            --candidate benchmark-results/boringcache-target-boringcache-sccache-rolling.json \
+            --baseline "$baseline" \
+            --candidate "$candidate" \
             --output-dir benchmark-results/target-transport \
             --title "Deno target transport with BoringCache sccache held constant"
 
