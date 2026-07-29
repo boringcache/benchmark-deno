@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -147,6 +148,23 @@ def main() -> int:
         for component in args.cache_components.split(",")
         if component.strip()
     ]
+    compiler_environment = {
+        name: os.environ.get(name)
+        for name in (
+            "RUSTC_WRAPPER",
+            "CC",
+            "CXX",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUSTFLAGS",
+            "RUSTDOCFLAGS",
+            "CARGO_INCREMENTAL",
+            "CARGO_PROFILE_RELEASE_INCREMENTAL",
+        )
+    }
+    compiler_environment_json = json.dumps(
+        compiler_environment, sort_keys=True, separators=(",", ":")
+    )
 
     payload = {
         "schema_version": 2,
@@ -196,9 +214,14 @@ def main() -> int:
             else None
         ),
         "target_freshness": freshness,
+        "compiler_environment": {
+            "values": compiler_environment,
+            "sha256": hashlib.sha256(compiler_environment_json.encode()).hexdigest(),
+        },
         "runner": {
             "provider": "github-actions",
             "image": os.environ.get("ImageOS"),
+            "image_version": os.environ.get("ImageVersion"),
             "architecture": os.environ.get("RUNNER_ARCH"),
             "os": os.environ.get("RUNNER_OS"),
             "filesystem_persisted_from_seed": False,
