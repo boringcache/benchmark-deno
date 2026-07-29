@@ -111,6 +111,12 @@ jobs:
           [[ "$SCCACHE_MULTILEVEL_CHAIN" == "disk,webdav" ]] || { echo "Unexpected sccache chain" >&2; exit 1; }
           [[ "$SCCACHE_MULTILEVEL_WRITE_ERROR_POLICY" == "all" ]] || { echo "The seed must require both cache writes" >&2; exit 1; }
 
+      - name: Establish the base source mtime identity
+        run: |
+          node ./scripts/run-deno-mtime-cache.js ./upstream |
+            tee /tmp/deno-shared-seed-mtime.log
+          test -s upstream/target/.mtime-cache-db.json
+
       - name: Build the shared base seed
         env:
           DENO_CARGO_EVIDENCE_FILE: /tmp/deno-shared-seed-cargo.jsonl
@@ -171,6 +177,7 @@ jobs:
           name: deno-release-sccache-target-shared-seed
           path: |
             /tmp/deno-shared-seed-cargo.jsonl
+            /tmp/deno-shared-seed-mtime.log
             /tmp/deno-shared-seed-sccache-stats.txt
           if-no-files-found: error
 
