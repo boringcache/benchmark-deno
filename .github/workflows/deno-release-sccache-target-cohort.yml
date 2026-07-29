@@ -125,6 +125,12 @@ jobs:
           ./scripts/run-deno-build.sh
           sccache --show-stats | tee /tmp/deno-shared-seed-sccache-stats.txt
 
+      - name: Apply Deno's target archive exclusions to the shared state
+        run: |
+          find upstream/target -mindepth 2 -maxdepth 2 \
+            \( -name gn_out -o -name gn_root -o -name '*.zip' -o -name '*.tar.gz' \) \
+            -print -exec rm -rf -- {} +
+
       - name: Require complete seed state
         run: |
           test -x upstream/target/release/deno
