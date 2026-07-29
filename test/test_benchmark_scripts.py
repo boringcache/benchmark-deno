@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,6 +22,7 @@ def load_script(name: str):
 
 write_phase_result = load_script("write_phase_result.py")
 render_comparison = load_script("render_comparison.py")
+verify_restored_freshness = load_script("verify_restored_freshness.py")
 
 
 class SccacheStatsTest(unittest.TestCase):
@@ -77,6 +79,74 @@ class SccacheStatsTest(unittest.TestCase):
             self.assertEqual(
                 stats["non_cacheable_reasons"], {"crate-type": 12, "missing input": 2}
             )
+
+
+class RestoredFreshnessTest(unittest.TestCase):
+    def test_proves_exact_mtimes_and_cargo_freshness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            tracked = source / "src.rs"
+            tracked.write_text("fn main() {}\n")
+            restored_mtime = 1_700_000_000.25
+            tracked.touch()
+            os.utime(tracked, (restored_mtime, restored_mtime))
+            key = "100644\0abc\0i/lf w/lf\0src.rs"
+            before = root / "before.json"
+            after = root / "after.json"
+            log = root / "mtime.log"
+            cargo = root / "cargo.jsonl"
+            before.write_text(json.dumps({key: restored_mtime}))
+            after.write_text(json.dumps({key: restored_mtime}))
+            log.write_text(
+                "mtime cache statistics\n"
+                "* restored: 1\n* added: 0\n* stale: 0\n* invalid: 0\n"
+            )
+            cargo.write_text(
+                json.dumps(
+                    {
+                        "reason": "compiler-artifact",
+                        "package_id": "fresh@1",
+                        "target": {"name": "fresh"},
+                        "fresh": True,
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "reason": "compiler-artifact",
+                        "package_id": "rebuilt@1",
+                        "target": {"name": "rebuilt"},
+                        "fresh": False,
+                    }
+                )
+                + "\n"
+                + json.dumps({"reason": "build-finished", "success": True})
+                + "\n"
+            )
+
+            evidence = verify_restored_freshness.build_evidence(
+                source, before, after, log, cargo
+            )
+
+            self.assertEqual(evidence["mtime"]["exact_restored_entries"], 1)
+            self.assertEqual(evidence["cargo"]["fresh_targets"], 1)
+            self.assertEqual(evidence["cargo"]["rebuilt_targets"], 1)
+
+    def test_rejects_a_filesystem_mtime_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            (source / "src.rs").write_text("fn main() {}\n")
+            key = "100644\0abc\0i/lf w/lf\0src.rs"
+
+            with self.assertRaisesRegex(ValueError, "filesystem mtime differs"):
+                verify_restored_freshness.verify_restored_mtimes(
+                    source, {key: 1_700_000_000.0}, {key: 1_700_000_000.0}
+                )
+
 
 class ComparisonReportTest(unittest.TestCase):
     def test_reports_rolling_improvement_without_overselling(self):

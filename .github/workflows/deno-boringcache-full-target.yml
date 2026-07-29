@@ -117,10 +117,10 @@ jobs:
 
       - name: Publish the restored paths to BoringCache
         id: cache
-        uses: boringcache/one@6b7033721b37075b2138fd0c769bf088e0836ce6 # v1.14.0
+        uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e # v1.15.0
         with:
           setup: none
-          cli-version: ${{ inputs.cli_version || 'v1.14.0' }}
+          cli-version: ${{ inputs.cli_version || 'v1.15.0' }}
           mode: archive
           trust-policy: publish
           working-directory: .
@@ -162,8 +162,8 @@ jobs:
             --cache-mode full-target-archive-plus-sccache \
             --cache-components actions-cargo-paths,full-target-directory,remote-sccache \
             --cache-import-status promoted \
-            --cli-version "${{ inputs.cli_version || 'v1.14.0' }}" \
-            --action-sha 6b7033721b37075b2138fd0c769bf088e0836ce6
+            --cli-version "${{ inputs.cli_version || 'v1.15.0' }}" \
+            --action-sha 8294be671cd5a2b73638df1b8e1e240df888297e
 
       - name: Upload promoted base result
         uses: actions/upload-artifact@v6
@@ -236,10 +236,10 @@ jobs:
 
       - name: Restore the full target and remote compiler cache
         id: cache
-        uses: boringcache/one@6b7033721b37075b2138fd0c769bf088e0836ce6 # v1.14.0
+        uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e # v1.15.0
         with:
           setup: none
-          cli-version: ${{ inputs.cli_version || 'v1.14.0' }}
+          cli-version: ${{ inputs.cli_version || 'v1.15.0' }}
           mode: sccache
           trust-policy: restore
           working-directory: .
@@ -265,7 +265,11 @@ jobs:
           [[ -x "upstream/target/${profile_dir}/deno" ]] || { echo "The full target archive is missing the Deno binary" >&2; exit 1; }
 
       - name: Apply Deno mtime cache
-        run: node ./scripts/run-deno-mtime-cache.js ./upstream
+        run: |
+          test -s upstream/target/.mtime-cache-db.json
+          cp upstream/target/.mtime-cache-db.json /tmp/deno-mtime-cache-before.json
+          node ./scripts/run-deno-mtime-cache.js ./upstream |
+            tee /tmp/deno-mtime-cache.log
 
       - name: Capture cache restore timing
         id: cache_timing
@@ -284,6 +288,8 @@ jobs:
 
       - name: Build rolling commit
         id: build
+        env:
+          DENO_CARGO_EVIDENCE_FILE: /tmp/deno-full-target-cargo.jsonl
         run: |
           sccache --zero-stats >/dev/null 2>&1 || true
           started_at="$(date +%s)"
@@ -292,6 +298,16 @@ jobs:
           seconds="$((finished_at - started_at))"
           echo "seconds=${seconds}" >> "$GITHUB_OUTPUT"
           sccache --show-stats | tee /tmp/deno-full-target-sccache-stats.txt
+
+      - name: Verify restored mtimes and Cargo freshness
+        run: |
+          ./scripts/verify_restored_freshness.py \
+            --source-root upstream \
+            --mtime-before /tmp/deno-mtime-cache-before.json \
+            --mtime-after upstream/target/.mtime-cache-db.json \
+            --mtime-log /tmp/deno-mtime-cache.log \
+            --cargo-messages /tmp/deno-full-target-cargo.jsonl \
+            --output benchmark-results/deno-full-target-freshness.json
 
       - name: Write rolling result
         run: |
@@ -312,8 +328,10 @@ jobs:
             --cache-import-status hit \
             --sccache-stats-file /tmp/deno-full-target-sccache-stats.txt \
             --require-sccache-evidence \
-            --cli-version "${{ inputs.cli_version || 'v1.14.0' }}" \
-            --action-sha 6b7033721b37075b2138fd0c769bf088e0836ce6
+            --freshness-evidence-file benchmark-results/deno-full-target-freshness.json \
+            --require-freshness-evidence \
+            --cli-version "${{ inputs.cli_version || 'v1.15.0' }}" \
+            --action-sha 8294be671cd5a2b73638df1b8e1e240df888297e
 
       - name: Upload rolling result
         uses: actions/upload-artifact@v6

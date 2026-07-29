@@ -6,7 +6,7 @@ cd "${repo_root}/upstream"
 
 export CARGO_PROFILE_DEV_DEBUG=0
 
-cargo build --locked \
+"${repo_root}/scripts/run-cargo-build.sh" --locked \
   -p deno \
   -p denort \
   -p test_server \

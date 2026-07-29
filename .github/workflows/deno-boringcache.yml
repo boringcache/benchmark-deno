@@ -100,10 +100,10 @@ jobs:
 
       - name: Configure BoringCache Rust compiler cache
         id: cache
-        uses: boringcache/one@6b7033721b37075b2138fd0c769bf088e0836ce6 # v1.14.0
+        uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e # v1.15.0
         with:
           setup: none
-          cli-version: ${{ inputs.cli_version || 'v1.14.0' }}
+          cli-version: ${{ inputs.cli_version || 'v1.15.0' }}
           mode: sccache
           trust-policy: publish
           working-directory: .
@@ -176,8 +176,8 @@ jobs:
             --cache-import-status cold \
             --sccache-stats-file /tmp/deno-base-sccache-stats.txt \
             --require-sccache-evidence \
-            --cli-version "${{ inputs.cli_version || 'v1.14.0' }}" \
-            --action-sha 6b7033721b37075b2138fd0c769bf088e0836ce6
+            --cli-version "${{ inputs.cli_version || 'v1.15.0' }}" \
+            --action-sha 8294be671cd5a2b73638df1b8e1e240df888297e
 
       - name: Upload base result
         uses: actions/upload-artifact@v6
@@ -239,10 +239,10 @@ jobs:
 
       - name: Restore BoringCache Rust compiler cache
         id: cache
-        uses: boringcache/one@6b7033721b37075b2138fd0c769bf088e0836ce6 # v1.14.0
+        uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e # v1.15.0
         with:
           setup: none
-          cli-version: ${{ inputs.cli_version || 'v1.14.0' }}
+          cli-version: ${{ inputs.cli_version || 'v1.15.0' }}
           mode: sccache
           trust-policy: restore
           working-directory: .
@@ -334,8 +334,8 @@ jobs:
             --cache-import-status ok \
             --sccache-stats-file /tmp/deno-rolling-sccache-stats.txt \
             --require-sccache-evidence \
-            --cli-version "${{ inputs.cli_version || 'v1.14.0' }}" \
-            --action-sha 6b7033721b37075b2138fd0c769bf088e0836ce6
+            --cli-version "${{ inputs.cli_version || 'v1.15.0' }}" \
+            --action-sha 8294be671cd5a2b73638df1b8e1e240df888297e
 
       - name: Upload rolling result
         uses: actions/upload-artifact@v6
