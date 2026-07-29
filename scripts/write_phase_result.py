@@ -115,6 +115,32 @@ def parse_sccache_stats(path: Path | None) -> dict[str, Any] | None:
     return parsed
 
 
+def runner_hardware() -> dict[str, Any]:
+    cpu_model = None
+    cpuinfo = Path("/proc/cpuinfo")
+    if cpuinfo.is_file():
+        for line in cpuinfo.read_text().splitlines():
+            if line.startswith("model name") and ":" in line:
+                cpu_model = line.split(":", 1)[1].strip()
+                break
+
+    memory_class_gib = None
+    meminfo = Path("/proc/meminfo")
+    if meminfo.is_file():
+        for line in meminfo.read_text().splitlines():
+            match = re.fullmatch(r"MemTotal:\s+(\d+)\s+kB", line)
+            if match:
+                total_gib = int(match.group(1)) * 1024 / (1024**3)
+                memory_class_gib = round(total_gib)
+                break
+
+    return {
+        "cpu_model": cpu_model,
+        "logical_cores": os.cpu_count(),
+        "memory_class_gib": memory_class_gib,
+    }
+
+
 def main() -> int:
     args = parse_args()
     output_dir = Path(args.output_dir)
@@ -225,6 +251,7 @@ def main() -> int:
             "architecture": os.environ.get("RUNNER_ARCH"),
             "os": os.environ.get("RUNNER_OS"),
             "filesystem_persisted_from_seed": False,
+            "hardware": runner_hardware(),
         },
         "github": {
             "repository": os.environ.get("GITHUB_REPOSITORY"),

@@ -46,6 +46,14 @@ def compare(
         if baseline_value != candidate_value:
             raise ValueError(f"Mismatched runner {field}")
 
+    for field in ("cpu_model", "logical_cores", "memory_class_gib"):
+        baseline_value = baseline.get("runner", {}).get("hardware", {}).get(field)
+        candidate_value = candidate.get("runner", {}).get("hardware", {}).get(field)
+        if baseline_value is None or candidate_value is None:
+            raise ValueError(f"Missing runner hardware {field}")
+        if baseline_value != candidate_value:
+            raise ValueError(f"Mismatched runner hardware {field}")
+
     baseline_compiler = baseline.get("compiler_environment", {}).get("sha256")
     candidate_compiler = candidate.get("compiler_environment", {}).get("sha256")
     if not baseline_compiler or not candidate_compiler:
