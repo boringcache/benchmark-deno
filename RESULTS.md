@@ -141,6 +141,7 @@ Proof runs:
 - [Full-target plus sccache run 30468773381](https://github.com/boringcache/benchmark-deno/actions/runs/30468773381)
 - [Target-only identity run 30472536341](https://github.com/boringcache/benchmark-deno/actions/runs/30472536341)
 - [Exact target-transport control 30484371972](https://github.com/boringcache/benchmark-deno/actions/runs/30484371972)
+- [Full-build target-transport repeat 30487469725](https://github.com/boringcache/benchmark-deno/actions/runs/30487469725)
 
 The exact control held the remote BoringCache sccache seed and Cargo state
 constant, then varied only the `target/` transport: Actions/cache in one lane
@@ -175,6 +176,45 @@ BoringCache target-only run, even though wrapper fingerprints caused more
 Cargo nodes to execute. Cross-run hosted-runner compute variance therefore
 dominated the apparent two-minute product gap.
 
+The full-build repeat reused the same canonical seed and ran both target
+transports concurrently with the same BoringCache sccache tag. Both target
+identity and post-build freshness gates passed. The result writer then rejected
+the two new strategy labels, so the run is red because of a reporting-contract
+bug after both builds completed; the completed step logs retain the timings and
+native-tool evidence.
+
+| Target transport | Restore/setup | Build | End-to-end | Cargo phases |
+|---|---:|---:|---:|---:|
+| Actions/cache target + BoringCache sccache | 54s | 1,717s | 1,771s | 17m53s + 10m38s |
+| BoringCache target + BoringCache sccache | 59s | 1,693s | 1,752s | 17m31s + 10m36s |
+
+Both lanes emitted the same 11 Cargo `Compiling` rows. Their sccache evidence
+was also identical: 24 requests, 12 executed Rust compilations, zero hits, 12
+misses, and zero cache errors. With the exact target restored, unchanged work
+was already Cargo-fresh; the remaining changed outputs were legitimate misses.
+This sample therefore does not show a steady-state build benefit from adding
+sccache to the full target, but it also shows no target/sccache incompatibility.
+
+The 24-second build difference is only 1.4% and is not attributable to target
+transport. Both workers ran in Azure `eastus2`, but the reporting failure
+prevented the CPU-model guard from producing a comparison artifact, so the
+19-second end-to-end difference is diagnostic rather than a product win.
+
+This repeat did not build a newer Deno source. It reused the same pinned
+`0c965f5e` -> `c3ea533f` pair as every release control above. Valid hosted
+Actions rolling samples for that pair have nevertheless taken 22m59s, 24m30s,
+and 29m07s before this repeat's 28m13s and 28m37s. The 22m59s result is the
+fast end of the observed four-core runner range, not an upstream average or a
+new source baseline.
+
+Transport performance also varied by network path. In this repeat,
+Actions/cache delivered its 2.78 GB archive at 276 MB/s and completed target
+restore in about 33 seconds. BoringCache delivered 2.42 GB at 104 MB/s and
+completed target restore in 45.3 seconds; extraction was about 22 seconds for
+both. The earlier restore-only control had both downloads near 104 MB/s and
+BoringCache was faster. Hosted network locality, not archive fidelity, is the
+remaining transport variable.
+
 Any future native-build performance claim must either use the same persistent
 runner for both lanes or record and normalize runner throughput. Restored-tree
 identity and transport timing should remain separate gates so native compute
@@ -203,8 +243,9 @@ the narrow ThinLTO archive, debug sccache alone, and the first-migration
 full-target plus sccache controls. Deno is not a current sccache migration
 prospect.
 
-If this account is revisited without another cold build, the only useful
-remaining control is BoringCache archive mode over the promoted Cargo and full
-target entries with sccache disabled. That would isolate archive transport from
-wrapper compatibility. Do not make a performance claim until such a paired
-rolling sample wins and repeats.
+The remaining useful performance control needs no new cold build: restore the
+existing no-wrapper target seed and the existing stable-sccache target seed on
+the same four-core Linux worker, then run both rolling builds in both orders.
+That crossover would isolate whether sccache helps the persistent-target shape
+without hosted CPU or page-cache order effects. Do not make a Deno performance
+claim until a hardware-controlled sample wins and repeats.
