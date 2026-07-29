@@ -118,8 +118,9 @@ outputs populate both BoringCache and a local disk cache, then snapshots the
 same Cargo and target state into both archive products. Fresh rolling jobs keep
 `RUSTC_WRAPPER`, `CC`, `CXX`, and incremental settings identical while comparing
 BoringCache's eagerly warmed remote sccache with the Actions-archived local
-sccache. The report refuses to compare different runner image releases and
-includes exact target freshness plus native hit/miss counts.
+sccache. The report refuses to compare different runner image releases, CPU
+models, core counts, memory classes, or compiler environments, and includes
+exact target freshness plus native hit/miss counts.
 
 ## Run it
 
