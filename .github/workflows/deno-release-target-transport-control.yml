@@ -1,0 +1,390 @@
+name: "Deno release target transport control"
+run-name: "Deno target transport control | seed ${{ inputs.seed_run_id }}.${{ inputs.seed_attempt }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed_run_id:
+        description: Completed same-seed cohort run that owns both cache representations.
+        required: true
+        type: string
+      seed_attempt:
+        description: Seed workflow attempt.
+        required: true
+        default: "1"
+        type: string
+      cli_version:
+        description: Released BoringCache CLI version.
+        required: true
+        default: v1.15.0
+        type: string
+      run_build:
+        description: Run the expensive Deno rolling build after target identity passes.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  actions: write
+  contents: read
+
+env:
+  BENCHMARK_ID: deno-release-rust-cache
+  BENCHMARK_WORKSPACE: boringcache/benchmark-deno
+  DENO_BENCHMARK_PROFILE: release
+  RELEASE_ACTION_SHA: 8294be671cd5a2b73638df1b8e1e240df888297e
+
+jobs:
+  promote-actions-target:
+    name: Derive the target-only Actions archive from the canonical seed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      actions_cargo_cache_key: ${{ steps.identity.outputs.actions_cargo_cache_key }}
+      actions_target_cache_key: ${{ steps.identity.outputs.actions_target_cache_key }}
+      boringcache_sccache_tag: ${{ steps.identity.outputs.boringcache_sccache_tag }}
+    steps:
+      - name: Checkout benchmark repository
+        uses: actions/checkout@v6
+
+      - name: Restore the canonical combined Actions archive
+        uses: actions/cache/restore@v5
+        with:
+          key: gha-deno-release-sccache-target-r${{ inputs.seed_run_id }}-a${{ inputs.seed_attempt }}-base
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cache/sccache
+            ~/.local/bin/sccache
+            upstream/target
+            !upstream/target/*/gn_out
+            !upstream/target/*/gn_root
+            !upstream/target/*/*.zip
+            !upstream/target/*/*.tar.gz
+          fail-on-cache-miss: true
+
+      - name: Require complete canonical target state
+        run: |
+          test -x upstream/target/release/deno
+          test -s upstream/target/.mtime-cache-db.json
+
+      - name: Capture canonical target identity
+        run: |
+          ./scripts/snapshot_target_state.py \
+            --root upstream/target \
+            --output benchmark-results/canonical-seed-target.json
+
+      - name: Save the shared Cargo Actions control archive
+        uses: actions/cache/save@v5
+        with:
+          key: gha-deno-release-cargo-only-r${{ inputs.seed_run_id }}-a${{ inputs.seed_attempt }}
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+
+      - name: Save the target-only Actions control archive
+        uses: actions/cache/save@v5
+        with:
+          key: gha-deno-release-target-only-r${{ inputs.seed_run_id }}-a${{ inputs.seed_attempt }}
+          path: |
+            upstream/target
+            !upstream/target/*/gn_out
+            !upstream/target/*/gn_root
+            !upstream/target/*/*.zip
+            !upstream/target/*/*.tar.gz
+
+      - name: Publish canonical identities
+        id: identity
+        run: |
+          {
+            echo "actions_cargo_cache_key=gha-deno-release-cargo-only-r${{ inputs.seed_run_id }}-a${{ inputs.seed_attempt }}"
+            echo "actions_target_cache_key=gha-deno-release-target-only-r${{ inputs.seed_run_id }}-a${{ inputs.seed_attempt }}"
+            echo "boringcache_sccache_tag=deno-rust-cache-r${{ inputs.seed_run_id }}-a${{ inputs.seed_attempt }}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload canonical target identity
+        uses: actions/upload-artifact@v6
+        with:
+          name: deno-target-transport-canonical-seed
+          path: benchmark-results/canonical-seed-target.json
+          if-no-files-found: error
+
+  rolling:
+    name: ${{ matrix.label }}
+    needs: promote-actions-target
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Actions target plus BoringCache sccache
+            target_transport: actions
+            cache_profile: sccache-only
+            strategy: actions-target-boringcache-sccache
+            cache_mode: actions-target-archive-plus-remote-sccache
+            cache_components: actions-cargo-paths,actions-target-directory,remote-sccache
+          - label: BoringCache target plus BoringCache sccache
+            target_transport: boringcache
+            cache_profile: target-only
+            strategy: boringcache-target-boringcache-sccache
+            cache_mode: boringcache-target-archive-plus-remote-sccache
+            cache_components: actions-cargo-paths,boringcache-target-directory,remote-sccache
+    steps:
+      - name: Validate BoringCache restore secret
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+        run: |
+          [[ -n "$BORINGCACHE_RESTORE_TOKEN" ]] || { echo "Missing BoringCache restore token" >&2; exit 1; }
+
+      - name: Checkout benchmark repository
+        uses: actions/checkout@v6
+
+      - name: Read pinned source
+        id: source
+        run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pinned Deno rolling source
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
+          ref: ${{ steps.source.outputs.DENO_HEAD_SHA }}
+          path: upstream
+          fetch-depth: 2
+          submodules: false
+
+      - name: Prepare rolling source
+        run: ./scripts/prepare-source.sh head
+
+      - name: Install Deno snapshot minifier runtime
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
+        with:
+          deno-version: v2.x
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: ${{ steps.source.outputs.DENO_RUST_VERSION }}
+
+      - name: Free runner disk space
+        run: ./scripts/free-runner-disk.sh
+
+      - name: Configure Deno Linux build environment
+        run: ./scripts/setup-deno-linux.sh
+
+      - name: Reuse the canonical BoringCache seed tags
+        run: ./scripts/scope-boringcache-run.sh "r${{ inputs.seed_run_id }}-a${{ inputs.seed_attempt }}"
+
+      - name: Start target and sccache restore timing
+        id: cache_start
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the same Cargo state through Actions/cache
+        uses: actions/cache/restore@v5
+        with:
+          key: ${{ needs.promote-actions-target.outputs.actions_cargo_cache_key }}
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+          fail-on-cache-miss: true
+
+      - name: Restore target through Actions/cache
+        if: matrix.target_transport == 'actions'
+        uses: actions/cache/restore@v5
+        with:
+          key: ${{ needs.promote-actions-target.outputs.actions_target_cache_key }}
+          path: |
+            upstream/target
+            !upstream/target/*/gn_out
+            !upstream/target/*/gn_root
+            !upstream/target/*/*.zip
+            !upstream/target/*/*.tar.gz
+          fail-on-cache-miss: true
+
+      - name: Restore the canonical BoringCache sccache and selected target transport
+        id: cache
+        uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e # v1.15.0
+        with:
+          setup: none
+          cli-version: ${{ inputs.cli_version }}
+          mode: sccache
+          trust-policy: restore
+          working-directory: .
+          cache-profiles: ${{ matrix.cache_profile }}
+          sccache-version: 0.16.0
+          verify: check
+          diagnostics: verbose
+          metadata-hints: |
+            benchmark=deno-release-rust-cache
+            phase=target-transport-control-${{ matrix.target_transport }}
+          fail-on-cache-error: true
+          fail-on-cache-miss: true
+          verbose: true
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+
+      - name: Require one adapter-owned remote sccache backend
+        run: ./scripts/configure-sccache-cohort.sh webdav
+
+      - name: Require restored target and compiler identity
+        run: |
+          [[ "${{ steps.cache.outputs.sccache-hit }}" == "true" ]] || { echo "The canonical sccache tag missed" >&2; exit 1; }
+          [[ "${{ steps.cache.outputs.sccache-tag }}" == "${{ needs.promote-actions-target.outputs.boringcache_sccache_tag }}" ]] || {
+            echo "Unexpected sccache tag: ${{ steps.cache.outputs.sccache-tag }}" >&2
+            exit 1
+          }
+          test -x upstream/target/release/deno
+          test -s upstream/target/.mtime-cache-db.json
+          [[ "$RUSTC_WRAPPER" == "sccache" ]] || { echo "Unexpected Rust wrapper" >&2; exit 1; }
+          [[ "$CC" == "/usr/bin/clang-22" ]] || { echo "Unexpected CC=$CC" >&2; exit 1; }
+          [[ "$CXX" == "sccache c++" ]] || { echo "Unexpected CXX=$CXX" >&2; exit 1; }
+          [[ "$SCCACHE_MULTILEVEL_CHAIN" == "webdav" ]] || { echo "Unexpected sccache chain" >&2; exit 1; }
+
+      - name: Snapshot restored target before Cargo can mutate it
+        id: snapshot
+        run: |
+          started_at="$(date +%s)"
+          ./scripts/snapshot_target_state.py \
+            --root upstream/target \
+            --output "benchmark-results/target-${{ matrix.target_transport }}.json"
+          echo "seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
+
+      - name: Apply Deno mtime cache
+        run: |
+          cp upstream/target/.mtime-cache-db.json "/tmp/deno-${{ matrix.target_transport }}-target-mtime-before.json"
+          node ./scripts/run-deno-mtime-cache.js ./upstream | tee "/tmp/deno-${{ matrix.target_transport }}-target-mtime.log"
+
+      - name: Capture target and sccache restore timing
+        id: cache_timing
+        run: |
+          elapsed="$(( $(date +%s) - ${{ steps.cache_start.outputs.started_at }} ))"
+          echo "seconds=$(( elapsed - ${{ steps.snapshot.outputs.seconds }} ))" >> "$GITHUB_OUTPUT"
+
+      - name: Build rolling commit with the common remote sccache
+        if: inputs.run_build
+        id: build
+        env:
+          DENO_CARGO_EVIDENCE_FILE: /tmp/deno-${{ matrix.target_transport }}-target-cargo.jsonl
+        run: |
+          sccache --zero-stats >/dev/null 2>&1 || true
+          started_at="$(date +%s)"
+          ./scripts/run-deno-build.sh
+          finished_at="$(date +%s)"
+          echo "seconds=$((finished_at - started_at))" >> "$GITHUB_OUTPUT"
+          sccache --show-stats | tee "/tmp/deno-${{ matrix.target_transport }}-target-sccache-stats.txt"
+
+      - name: Verify restored target freshness
+        if: inputs.run_build
+        run: |
+          ./scripts/verify_restored_freshness.py \
+            --source-root upstream \
+            --mtime-before "/tmp/deno-${{ matrix.target_transport }}-target-mtime-before.json" \
+            --mtime-after upstream/target/.mtime-cache-db.json \
+            --mtime-log "/tmp/deno-${{ matrix.target_transport }}-target-mtime.log" \
+            --cargo-messages "/tmp/deno-${{ matrix.target_transport }}-target-cargo.jsonl" \
+            --output "benchmark-results/deno-${{ matrix.target_transport }}-target-freshness.json"
+
+      - name: Write target transport result
+        if: inputs.run_build
+        run: |
+          end_to_end="$(( ${{ steps.cache_timing.outputs.seconds }} + ${{ steps.build.outputs.seconds }} ))"
+          ./scripts/write_phase_result.py \
+            --benchmark "$BENCHMARK_ID" \
+            --strategy "${{ matrix.strategy }}" \
+            --build-profile "$DENO_BENCHMARK_PROFILE" \
+            --phase rolling \
+            --source-sha "${{ steps.source.outputs.DENO_HEAD_SHA }}" \
+            --restore-seconds "${{ steps.cache_timing.outputs.seconds }}" \
+            --build-seconds "${{ steps.build.outputs.seconds }}" \
+            --end-to-end-seconds "$end_to_end" \
+            --cache-key "${{ steps.cache.outputs.resolved-tags }}" \
+            --cache-mode "${{ matrix.cache_mode }}" \
+            --cache-components "${{ matrix.cache_components }}" \
+            --cache-import-status hit \
+            --sccache-stats-file "/tmp/deno-${{ matrix.target_transport }}-target-sccache-stats.txt" \
+            --require-sccache-evidence \
+            --freshness-evidence-file "benchmark-results/deno-${{ matrix.target_transport }}-target-freshness.json" \
+            --require-freshness-evidence \
+            --cli-version "${{ inputs.cli_version }}" \
+            --action-sha "$RELEASE_ACTION_SHA"
+
+      - name: Upload restored target identity
+        uses: actions/upload-artifact@v6
+        with:
+          name: phase-${{ env.BENCHMARK_ID }}-${{ matrix.strategy }}
+          path: benchmark-results/target-${{ matrix.target_transport }}.json
+          if-no-files-found: error
+
+      - name: Upload optional rolling-build evidence
+        if: inputs.run_build
+        uses: actions/upload-artifact@v6
+        with:
+          name: build-${{ env.BENCHMARK_ID }}-${{ matrix.strategy }}
+          path: |
+            benchmark-results/${{ matrix.strategy }}-rolling.json
+            benchmark-results/deno-${{ matrix.target_transport }}-target-freshness.json
+            /tmp/deno-${{ matrix.target_transport }}-target-sccache-stats.txt
+          if-no-files-found: error
+
+  compare:
+    name: Compare target transports with sccache held constant
+    needs: rolling
+    if: always() && needs.rolling.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout benchmark repository
+        uses: actions/checkout@v6
+
+      - name: Download target transport evidence
+        uses: actions/download-artifact@v8
+        with:
+          pattern: phase-${{ env.BENCHMARK_ID }}-*-target-boringcache-sccache
+          path: benchmark-results
+          merge-multiple: true
+
+      - name: Download canonical seed identity
+        uses: actions/download-artifact@v8
+        with:
+          name: deno-target-transport-canonical-seed
+          path: benchmark-results
+
+      - name: Download optional rolling-build evidence
+        if: inputs.run_build
+        uses: actions/download-artifact@v8
+        with:
+          pattern: build-${{ env.BENCHMARK_ID }}-*-target-boringcache-sccache
+          path: benchmark-results
+          merge-multiple: true
+
+      - name: Prove restored target identity
+        run: |
+          ./scripts/compare_target_snapshots.py \
+            --actions benchmark-results/target-actions.json \
+            --boringcache benchmark-results/target-boringcache.json \
+            --output benchmark-results/target-comparison.json
+          ./scripts/compare_target_snapshots.py \
+            --actions benchmark-results/canonical-seed-target.json \
+            --boringcache benchmark-results/target-actions.json \
+            --output benchmark-results/canonical-actions-target-comparison.json
+          ./scripts/compare_target_snapshots.py \
+            --actions benchmark-results/canonical-seed-target.json \
+            --boringcache benchmark-results/target-boringcache.json \
+            --output benchmark-results/canonical-boringcache-target-comparison.json
+
+      - name: Render target transport comparison
+        if: inputs.run_build
+        run: |
+          ./scripts/compare_rolling_controls.py \
+            --baseline benchmark-results/actions-target-boringcache-sccache-rolling.json \
+            --candidate benchmark-results/boringcache-target-boringcache-sccache-rolling.json \
+            --output-dir benchmark-results/target-transport \
+            --title "Deno target transport with BoringCache sccache held constant"
+
+      - name: Upload target transport comparison
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-${{ env.BENCHMARK_ID }}-target-transport-control
+          path: |
+            benchmark-results/*target-comparison.json
+            benchmark-results/target-transport
+          if-no-files-found: error
