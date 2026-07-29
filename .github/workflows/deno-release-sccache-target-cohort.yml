@@ -136,8 +136,7 @@ jobs:
           test -x upstream/target/release/deno
           test -s upstream/target/.mtime-cache-db.json
           test -d "$HOME/.cache/sccache"
-          cp "$(command -v sccache)" "$HOME/.local/bin/sccache"
-          chmod +x "$HOME/.local/bin/sccache"
+          test -x "$HOME/.local/bin/sccache"
 
       - name: Save the Actions target and local sccache archive
         uses: actions/cache/save@v5

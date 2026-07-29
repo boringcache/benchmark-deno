@@ -76,6 +76,14 @@ class SccacheTargetCohortWorkflowTest(unittest.TestCase):
         self.assertNotIn("sccache --stop-server", workflow)
         self.assertNotIn("sccache --start-server", workflow)
 
+    def test_reuses_the_action_installed_sccache_binary(self):
+        workflow = (
+            ROOT / ".github/workflows/deno-release-sccache-target-cohort.yml"
+        ).read_text()
+
+        self.assertIn('test -x "$HOME/.local/bin/sccache"', workflow)
+        self.assertNotIn('cp "$(command -v sccache)"', workflow)
+
 
 class SccacheStatsTest(unittest.TestCase):
     def test_parses_hit_rate(self):
