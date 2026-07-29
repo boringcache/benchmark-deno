@@ -284,6 +284,23 @@ jobs:
             --cargo-messages "/tmp/deno-${{ matrix.target_transport }}-target-cargo.jsonl" \
             --output "benchmark-results/deno-${{ matrix.target_transport }}-target-freshness.json"
 
+      - name: Upload restored target identity
+        uses: actions/upload-artifact@v6
+        with:
+          name: phase-${{ env.BENCHMARK_ID }}-${{ matrix.strategy }}
+          path: benchmark-results/target-${{ matrix.target_transport }}.json
+          if-no-files-found: error
+
+      - name: Upload raw rolling-build evidence
+        if: inputs.run_build
+        uses: actions/upload-artifact@v6
+        with:
+          name: raw-build-${{ env.BENCHMARK_ID }}-${{ matrix.strategy }}
+          path: |
+            benchmark-results/deno-${{ matrix.target_transport }}-target-freshness.json
+            /tmp/deno-${{ matrix.target_transport }}-target-sccache-stats.txt
+          if-no-files-found: error
+
       - name: Write target transport result
         if: inputs.run_build
         run: |
@@ -307,13 +324,6 @@ jobs:
             --require-freshness-evidence \
             --cli-version "${{ inputs.cli_version }}" \
             --action-sha "$RELEASE_ACTION_SHA"
-
-      - name: Upload restored target identity
-        uses: actions/upload-artifact@v6
-        with:
-          name: phase-${{ env.BENCHMARK_ID }}-${{ matrix.strategy }}
-          path: benchmark-results/target-${{ matrix.target_transport }}.json
-          if-no-files-found: error
 
       - name: Upload optional rolling-build evidence
         if: inputs.run_build
