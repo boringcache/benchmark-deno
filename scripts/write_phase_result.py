@@ -19,6 +19,7 @@ def parse_args() -> argparse.Namespace:
             "boringcache",
             "boringcache-hybrid",
             "boringcache-full-target",
+            "boringcache-target-only",
         ),
     )
     parser.add_argument("--benchmark", required=True)
