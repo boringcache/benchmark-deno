@@ -45,6 +45,8 @@ The proof reports the parts needed to answer that honestly:
 - native `sccache` hits, misses, and non-cacheable compilations
 - Deno mtime-cache counters, exact restored source mtimes, and Cargo's own
   fresh-versus-rebuilt target decisions for the full-target control
+- full-target logical and allocated bytes, file count, and parent-to-successor
+  growth classification, so speed cannot hide an unbounded archive
 
 It does not claim that compiler caching accelerates Deno's startup-order trace
 or second ThinLTO relink. Those stages are deliberately excluded and called out

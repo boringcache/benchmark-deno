@@ -264,6 +264,13 @@ jobs:
           [[ -d "upstream/target/${profile_dir}" ]] || { echo "The full target archive is missing ${profile_dir}" >&2; exit 1; }
           [[ -x "upstream/target/${profile_dir}/deno" ]] || { echo "The full target archive is missing the Deno binary" >&2; exit 1; }
 
+      - name: Capture restored parent target state
+        run: |
+          ./scripts/measure_target_growth.py snapshot \
+            --root upstream/target \
+            --source-sha "${{ steps.source.outputs.DENO_BASE_SHA }}" \
+            --output benchmark-results/deno-full-target-before.json
+
       - name: Apply Deno mtime cache
         run: |
           test -s upstream/target/.mtime-cache-db.json
@@ -298,6 +305,23 @@ jobs:
           seconds="$((finished_at - started_at))"
           echo "seconds=${seconds}" >> "$GITHUB_OUTPUT"
           sccache --show-stats | tee /tmp/deno-full-target-sccache-stats.txt
+
+      - name: Measure rolling target growth
+        run: |
+          ./scripts/measure_target_growth.py snapshot \
+            --root upstream/target \
+            --source-sha "${{ steps.source.outputs.DENO_HEAD_SHA }}" \
+            --output benchmark-results/deno-full-target-after.json
+          ./scripts/measure_target_growth.py compare \
+            --before benchmark-results/deno-full-target-before.json \
+            --after benchmark-results/deno-full-target-after.json \
+            --output benchmark-results/deno-full-target-growth.json
+
+          jq -r '
+            "Target growth: \(.logical_bytes_before) -> \(.logical_bytes_after) bytes " +
+            "(\(.logical_bytes_delta) bytes, \(.logical_bytes_delta_percent)%), " +
+            "\(.files_before) -> \(.files_after) files; \(.classification)."
+          ' benchmark-results/deno-full-target-growth.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify restored mtimes and Cargo freshness
         run: |
@@ -340,6 +364,16 @@ jobs:
           path: benchmark-results/boringcache-full-target-rolling.json
           if-no-files-found: error
 
+      - name: Upload target growth evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: target-growth-${{ env.BENCHMARK_ID }}-boringcache-full-target
+          path: |
+            benchmark-results/deno-full-target-before.json
+            benchmark-results/deno-full-target-after.json
+            benchmark-results/deno-full-target-growth.json
+          if-no-files-found: error
+
   compare:
     name: Compare reused Actions baseline with full-target BoringCache
     needs: [promote-seed, rolling-head]
@@ -365,6 +399,12 @@ jobs:
           path: benchmark-phases
           merge-multiple: true
 
+      - name: Download target growth evidence
+        uses: actions/download-artifact@v8
+        with:
+          name: target-growth-${{ env.BENCHMARK_ID }}-boringcache-full-target
+          path: target-growth
+
       - name: Render comparison
         run: |
           ./scripts/render_comparison.py \
@@ -373,6 +413,7 @@ jobs:
             --benchmark "$BENCHMARK_ID" \
             --candidate-strategy boringcache-full-target \
             --title "Deno ${DENO_BENCHMARK_PROFILE} full-target plus sccache proof"
+          cp target-growth/*.json benchmark-results/
 
       - name: Publish job summary
         run: cat benchmark-results/comparison.md >> "$GITHUB_STEP_SUMMARY"
