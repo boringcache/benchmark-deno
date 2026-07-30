@@ -120,7 +120,7 @@ jobs:
         uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e # v1.15.0
         with:
           setup: none
-          cli-version: ${{ inputs.cli_version || 'v1.15.0' }}
+          cli-version: ${{ inputs.cli_version }}
           mode: archive
           trust-policy: publish
           working-directory: .
@@ -239,7 +239,7 @@ jobs:
         uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e # v1.15.0
         with:
           setup: none
-          cli-version: ${{ inputs.cli_version || 'v1.15.0' }}
+          cli-version: ${{ inputs.cli_version }}
           mode: sccache
           trust-policy: restore
           working-directory: .
