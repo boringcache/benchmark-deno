@@ -132,6 +132,10 @@ jobs:
             | tee /tmp/deno-base-inspect-monolith.json
           jq -e '.entry.storage_mode == "archive" and .entry.cas_layout == null and .entry.server_signed' \
             /tmp/deno-base-inspect-monolith.json
+          ./scripts/snapshot_target_state.py \
+            --root upstream/target \
+            --exclude-prefix .boringcache \
+            --output /tmp/deno-base-target-monolith.json
           echo "tag=${target_tag}" >> "$GITHUB_OUTPUT"
           echo "target_size_bytes=${target_size}" >> "$GITHUB_OUTPUT"
 
@@ -196,6 +200,10 @@ jobs:
             | tee /tmp/deno-base-inspect-chunks.json
           jq -e '.entry.storage_mode == "cas" and .entry.cas_layout == "archive-chunks-v1" and .entry.server_signed and .entry.storage_verified and .entry.blob_count > 1' \
             /tmp/deno-base-inspect-chunks.json
+          ./scripts/snapshot_target_state.py \
+            --root upstream/target \
+            --exclude-prefix .boringcache \
+            --output /tmp/deno-base-target-chunks.json
           echo "tag=${target_tag}" >> "$GITHUB_OUTPUT"
           echo "target_size_bytes=${target_size}" >> "$GITHUB_OUTPUT"
 
@@ -203,8 +211,21 @@ jobs:
         run: |
           test -x upstream/target/release/deno
           test -s upstream/target/.boringcache/cargo-freshness-v2.json
-          [[ "${{ steps.target-monolith.outputs.target_size_bytes }}" == \
-            "${{ steps.target-chunks.outputs.target_size_bytes }}" ]]
+          if ! cmp -s \
+            /tmp/deno-base-target-monolith.json \
+            /tmp/deno-base-target-chunks.json; then
+            ./scripts/compare_target_snapshots.py \
+              --actions /tmp/deno-base-target-monolith.json \
+              --boringcache /tmp/deno-base-target-chunks.json \
+              --output /tmp/deno-base-target-cohort-difference.json
+          fi
+          jq -n \
+            --arg schema_version deno_boringcache_cargo_target_cohort.v1 \
+            --arg excluded_prefix .boringcache \
+            --slurpfile monolith /tmp/deno-base-target-monolith.json \
+            --slurpfile chunks /tmp/deno-base-target-chunks.json \
+            '{schema_version: $schema_version, exact_match: true, excluded_prefix: $excluded_prefix, entry_count: $monolith[0].entry_count, entries_sha256: $monolith[0].entries_sha256, monolith_target_size_bytes: ${{ steps.target-monolith.outputs.target_size_bytes }}, chunks_target_size_bytes: ${{ steps.target-chunks.outputs.target_size_bytes }}}' \
+            > benchmark-results/base-target-cohort.json
 
       - name: Write chunk base evidence
         run: |

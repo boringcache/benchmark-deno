@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import os
@@ -59,6 +60,12 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
         self.assertNotIn("seed_registry_tag", workflow)
         self.assertNotIn("boringcache restore", workflow)
         self.assertNotIn("uses: actions/cache/restore@", workflow)
+        self.assertEqual(workflow.count("--exclude-prefix .boringcache"), 2)
+        self.assertIn("cmp -s", workflow)
+        self.assertNotIn(
+            '[[ "${{ steps.target-monolith.outputs.target_size_bytes }}" ==',
+            workflow,
+        )
         self.assertIn(
             "uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e",
             workflow,
@@ -484,6 +491,40 @@ class TargetSnapshotTest(unittest.TestCase):
 
             self.assertTrue(comparison["exact_match"])
             self.assertEqual(left["entries_sha256"], right["entries_sha256"])
+
+    def test_can_exclude_transport_metadata_from_the_target_payload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            artifact = target / "release" / "artifact.rlib"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(b"compiled payload")
+            metadata = target / ".boringcache" / "cargo-freshness-v2.json"
+            metadata.parent.mkdir()
+            metadata.write_text('{"generation":1}')
+
+            unfiltered_before = snapshot_target_state.snapshot(target)
+            before = snapshot_target_state.snapshot(
+                target, (Path(".boringcache"),)
+            )
+            metadata.write_text('{"generation":22}')
+            unfiltered_after = snapshot_target_state.snapshot(target)
+            after = snapshot_target_state.snapshot(
+                target, (Path(".boringcache"),)
+            )
+
+            self.assertEqual(before, after)
+            self.assertEqual(before["excluded_prefixes"], [".boringcache"])
+            self.assertNotEqual(
+                unfiltered_before["entries_sha256"],
+                unfiltered_after["entries_sha256"],
+            )
+
+    def test_rejects_unsafe_exclude_prefixes(self):
+        for value in ("", ".", "..", "../target", "/tmp/target"):
+            with self.subTest(value=value):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    snapshot_target_state.relative_prefix(value)
 
     def test_names_the_target_entry_that_differs(self):
         with tempfile.TemporaryDirectory() as directory:

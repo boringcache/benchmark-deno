@@ -6,8 +6,8 @@ import hashlib
 import json
 import os
 import stat
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from collections.abc import Callable
 from typing import Any, cast
 
 
@@ -15,7 +15,28 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--exclude-prefix",
+        action="append",
+        default=[],
+        type=relative_prefix,
+        help="Relative target path to omit, including its descendants.",
+    )
     return parser.parse_args()
+
+
+def relative_prefix(value: str) -> Path:
+    prefix = Path(value)
+    if (
+        not value.strip()
+        or prefix.is_absolute()
+        or not prefix.parts
+        or any(part in {".", ".."} for part in prefix.parts)
+    ):
+        raise argparse.ArgumentTypeError(
+            f"Exclude prefix must be a non-empty relative path: {value!r}"
+        )
+    return prefix
 
 
 def sha256_file(path: Path) -> str:
@@ -58,12 +79,25 @@ def entry_type(mode: int) -> str:
     return "other"
 
 
-def snapshot(root: Path) -> dict[str, Any]:
+def snapshot(
+    root: Path, exclude_prefixes: Sequence[Path] = ()
+) -> dict[str, Any]:
     root = root.resolve()
     if not root.is_dir():
         raise ValueError(f"Target root is not a directory: {root}")
 
-    paths = sorted(root.rglob("*"), key=lambda path: path.relative_to(root).as_posix())
+    excluded_parts = tuple(prefix.parts for prefix in exclude_prefixes)
+
+    def included(path: Path) -> bool:
+        relative_parts = path.relative_to(root).parts
+        return not any(
+            relative_parts[: len(prefix)] == prefix for prefix in excluded_parts
+        )
+
+    paths = sorted(
+        (path for path in root.rglob("*") if included(path)),
+        key=lambda path: path.relative_to(root).as_posix(),
+    )
     hardlinks: dict[tuple[int, int], list[str]] = {}
     for path in paths:
         metadata = path.lstat()
@@ -119,6 +153,7 @@ def snapshot(root: Path) -> dict[str, Any]:
     return {
         "schema_version": "deno_target_snapshot.v1",
         "root_name": root.name,
+        "excluded_prefixes": [prefix.as_posix() for prefix in exclude_prefixes],
         "entry_count": len(entries),
         **counts,
         "total_file_bytes": total_file_bytes,
@@ -130,7 +165,7 @@ def snapshot(root: Path) -> dict[str, Any]:
 
 def main() -> int:
     args = parse_args()
-    payload = snapshot(Path(args.root))
+    payload = snapshot(Path(args.root), args.exclude_prefix)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
