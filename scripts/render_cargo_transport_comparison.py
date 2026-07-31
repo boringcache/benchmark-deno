@@ -61,8 +61,9 @@ def main() -> int:
         rolling = results[transport]["rolling"]
         archive = rolling["archive"]
         rows.append(
-            "| {transport} | {publish}s | {rolling_time}s | {target} | {stored} | {layout} | {fresh}/{rebuilt} | {hits}/{misses} |".format(
+            "| {transport} | {publication} | {publish}s | {rolling_time}s | {target} | {stored} | {layout} | {fresh}/{rebuilt} | {hits}/{misses} |".format(
                 transport=transport,
+                publication=base["publication"],
                 publish=base["elapsed_seconds"],
                 rolling_time=rolling["elapsed_seconds"],
                 target=gib(rolling["target_size_bytes"]),
@@ -81,11 +82,11 @@ def main() -> int:
             "",
             f"Exact CLI: `{comparison['cli_version']}`",
             "",
-            "| Transport | Base publish | Rolling end to end | Target | Stored | Layout | Cargo fresh/rebuilt | sccache hits/misses |",
-            "|---|---:|---:|---:|---:|---|---:|---:|",
+            "| Transport | Base operation | Recorded base duration | Rolling end to end | Target | Stored | Layout | Cargo fresh/rebuilt | sccache hits/misses |",
+            "|---|---|---:|---:|---:|---:|---|---:|---:|",
             *rows,
             "",
-            "Both lanes use the same CLI-owned Cargo plan. Only the generic archive transport changes.",
+            "The base target is produced once by `boringcache cargo`, then the frozen cohort is encoded through both generic archive transports. The monolith base duration includes the Cargo build, while the chunk duration measures only the second encoding, so those base durations are evidence rather than a direct comparison. Both rolling lanes consume the same CLI-owned Cargo plan and differ only by archive transport.",
             "",
         ]
     )

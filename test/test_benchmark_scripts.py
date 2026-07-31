@@ -29,9 +29,7 @@ verify_restored_freshness = load_script("verify_restored_freshness.py")
 snapshot_target_state = load_script("snapshot_target_state.py")
 compare_target_snapshots = load_script("compare_target_snapshots.py")
 verify_boringcache_cargo = load_script("verify_boringcache_cargo.py")
-render_cargo_transport_comparison = load_script(
-    "render_cargo_transport_comparison.py"
-)
+render_cargo_transport_comparison = load_script("render_cargo_transport_comparison.py")
 
 
 class CargoArchiveChunksWorkflowTest(unittest.TestCase):
@@ -42,7 +40,7 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
 
         self.assertIn("transport: chunks", workflow)
         self.assertIn("transport: monolith", workflow)
-        self.assertIn("DENO_USE_BORINGCACHE_CARGO: \"1\"", workflow)
+        self.assertIn('DENO_USE_BORINGCACHE_CARGO: "1"', workflow)
         self.assertIn("DENO_BORINGCACHE_CARGO_ACCESS: publish", workflow)
         self.assertIn("DENO_BORINGCACHE_CARGO_ACCESS: consume", workflow)
         self.assertIn("BORINGCACHE_ARCHIVE_GRAPH_WRITES", workflow)
@@ -51,9 +49,12 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
             "Build and publish the monolith through boringcache cargo", workflow
         )
         self.assertIn(
-            "Reuse and publish the same target as chunks through boringcache cargo",
+            "Encode the frozen Cargo cohort as chunks through the archive CLI",
             workflow,
         )
+        self.assertIn("publication boringcache-save", workflow)
+        self.assertEqual(workflow.count("DENO_BORINGCACHE_CARGO_ACCESS: publish"), 1)
+        self.assertIn('boringcache save "$BENCHMARK_WORKSPACE"', workflow)
         self.assertIn('storage_mode == "archive"', workflow)
         self.assertNotIn("run-deno-mtime-cache.js", workflow)
         self.assertNotIn("seed_target_tag", workflow)
@@ -98,9 +99,13 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
             'sccache_tag="deno-rust-cache-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"',
             workflow,
         )
-        self.assertIn('.kv_entry_count > 0', workflow)
-        self.assertIn('test ! -e upstream/target', workflow)
-        self.assertIn('test -x upstream/target/release/deno', workflow)
+        self.assertIn(".kv_entry_count > 0", workflow)
+        self.assertIn("test ! -e upstream/target", workflow)
+        self.assertIn("test -x upstream/target/release/deno", workflow)
+        self.assertIn(
+            "Cargo stdout line",
+            (ROOT / "scripts/verify_boringcache_cargo.py").read_text(),
+        )
 
     def test_rust_toolchain_archive_matches_the_pinned_source_version(self):
         source = dict(
@@ -114,16 +119,14 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
         self.assertIn(
             f'tag = "deno-rust-toolchain-{version.replace(".", "-")}"', config
         )
-        self.assertIn(
-            f'path = "~/.local/share/mise/installs/rust/{version}"', config
-        )
+        self.assertIn(f'path = "~/.local/share/mise/installs/rust/{version}"', config)
         self.assertIn('[profiles.rust-toolchain]\nentries = ["rust-toolchain"]', config)
 
     def test_release_build_uses_one_restore_and_saves_only_after_the_final_phase(self):
         release_build = (ROOT / "scripts/run-deno-release-build.sh").read_text()
 
-        self.assertIn('DENO_BORINGCACHE_SKIP_SAVE=1', release_build)
-        self.assertIn('DENO_BORINGCACHE_SKIP_RESTORE=1', release_build)
+        self.assertIn("DENO_BORINGCACHE_SKIP_SAVE=1", release_build)
+        self.assertIn("DENO_BORINGCACHE_SKIP_RESTORE=1", release_build)
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -152,16 +155,10 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
                 )
                 return args_log.read_text().splitlines()
 
-            primary_publish = wrapped_args(
-                "publish", DENO_BORINGCACHE_SKIP_SAVE="1"
-            )
-            final_publish = wrapped_args(
-                "publish", DENO_BORINGCACHE_SKIP_RESTORE="1"
-            )
+            primary_publish = wrapped_args("publish", DENO_BORINGCACHE_SKIP_SAVE="1")
+            final_publish = wrapped_args("publish", DENO_BORINGCACHE_SKIP_RESTORE="1")
             primary_consume = wrapped_args("consume")
-            final_consume = wrapped_args(
-                "consume", DENO_BORINGCACHE_SKIP_RESTORE="1"
-            )
+            final_consume = wrapped_args("consume", DENO_BORINGCACHE_SKIP_RESTORE="1")
 
         self.assertIn("--skip-save", primary_publish)
         self.assertNotIn("--skip-save", final_publish)
@@ -174,6 +171,17 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
 
 
 class BoringCacheCargoEvidenceTest(unittest.TestCase):
+    def test_rejects_non_json_text_on_cargo_stdout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            messages = Path(directory) / "cargo.jsonl"
+            messages.write_text(
+                "[boringcache] restoring target\n"
+                '{"reason":"build-finished","success":true}\n'
+            )
+
+            with self.assertRaisesRegex(ValueError, "Cargo stdout line 1 is not JSON"):
+                verify_boringcache_cargo.parse_cargo_messages(messages)
+
     def test_verifies_transported_source_mtimes_against_git_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -216,9 +224,7 @@ class BoringCacheCargoEvidenceTest(unittest.TestCase):
                 ns=(changed_ns, changed_ns),
             )
             changed.write_text("after\n")
-            subprocess.run(
-                ["git", "-C", str(source), "add", "changed.rs"], check=True
-            )
+            subprocess.run(["git", "-C", str(source), "add", "changed.rs"], check=True)
             os.utime(changed, ns=(changed_ns, changed_ns))
 
             entries = []
@@ -330,9 +336,7 @@ class BoringCacheCargoEvidenceTest(unittest.TestCase):
             self.assertEqual(sccache["hit_rate"], 0.0)
 
     def test_comparison_formats_gibibytes_without_claiming_attribution(self):
-        self.assertEqual(
-            render_cargo_transport_comparison.gib(5 * 1024**3), "5.00 GiB"
-        )
+        self.assertEqual(render_cargo_transport_comparison.gib(5 * 1024**3), "5.00 GiB")
 
 
 class SccacheTargetCohortWorkflowTest(unittest.TestCase):
@@ -344,9 +348,7 @@ class SccacheTargetCohortWorkflowTest(unittest.TestCase):
         mtime_step = workflow.index("Establish the base source mtime identity")
         build_step = workflow.index("Build the shared base seed")
         self.assertLess(mtime_step, build_step)
-        self.assertIn(
-            "node ./scripts/run-deno-mtime-cache.js ./upstream", workflow
-        )
+        self.assertIn("node ./scripts/run-deno-mtime-cache.js ./upstream", workflow)
         self.assertIn("test -s upstream/target/.mtime-cache-db.json", workflow)
 
     def test_prunes_deno_exclusions_before_either_product_saves(self):
@@ -358,7 +360,9 @@ class SccacheTargetCohortWorkflowTest(unittest.TestCase):
         prune_step = workflow.index(
             "Apply Deno's target archive exclusions to the shared state"
         )
-        actions_save = workflow.index("Save the Actions target and local sccache archive")
+        actions_save = workflow.index(
+            "Save the Actions target and local sccache archive"
+        )
         self.assertLess(build_step, prune_step)
         self.assertLess(prune_step, actions_save)
         for pattern in ("gn_out", "gn_root", "'*.zip'", "'*.tar.gz'"):
@@ -417,7 +421,9 @@ class TargetTransportWorkflowTest(unittest.TestCase):
 
         self.assertIn("Actions target plus BoringCache sccache", workflow)
         self.assertIn("BoringCache target plus BoringCache sccache", workflow)
-        self.assertEqual(workflow.count("run: ./scripts/configure-sccache-cohort.sh webdav"), 1)
+        self.assertEqual(
+            workflow.count("run: ./scripts/configure-sccache-cohort.sh webdav"), 1
+        )
         self.assertIn("cache_profile: sccache-only", workflow)
         self.assertIn("cache_profile: target-only", workflow)
         self.assertIn("Restore the same Cargo state through Actions/cache", workflow)
@@ -504,14 +510,10 @@ class TargetSnapshotTest(unittest.TestCase):
             metadata.write_text('{"generation":1}')
 
             unfiltered_before = snapshot_target_state.snapshot(target)
-            before = snapshot_target_state.snapshot(
-                target, (Path(".boringcache"),)
-            )
+            before = snapshot_target_state.snapshot(target, (Path(".boringcache"),))
             metadata.write_text('{"generation":22}')
             unfiltered_after = snapshot_target_state.snapshot(target)
-            after = snapshot_target_state.snapshot(
-                target, (Path(".boringcache"),)
-            )
+            after = snapshot_target_state.snapshot(target, (Path(".boringcache"),))
 
             self.assertEqual(before, after)
             self.assertEqual(before["excluded_prefixes"], [".boringcache"])
@@ -808,7 +810,11 @@ class RollingControlComparisonTest(unittest.TestCase):
                 },
             },
             "compiler_environment": {"sha256": "compiler-env"},
-            "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
+            "timing": {
+                "restore_seconds": 1,
+                "build_seconds": 2,
+                "end_to_end_seconds": 3,
+            },
         }
         candidate = {
             **baseline,
@@ -838,7 +844,11 @@ class RollingControlComparisonTest(unittest.TestCase):
                 },
             },
             "compiler_environment": {"sha256": "compiler-env"},
-            "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
+            "timing": {
+                "restore_seconds": 1,
+                "build_seconds": 2,
+                "end_to_end_seconds": 3,
+            },
         }
         candidate = {
             **baseline,
@@ -868,7 +878,11 @@ class RollingControlComparisonTest(unittest.TestCase):
                 },
             },
             "compiler_environment": {"sha256": "compiler-env"},
-            "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
+            "timing": {
+                "restore_seconds": 1,
+                "build_seconds": 2,
+                "end_to_end_seconds": 3,
+            },
         }
         candidate = {
             **baseline,
@@ -898,14 +912,20 @@ class RollingControlComparisonTest(unittest.TestCase):
                 },
             },
             "compiler_environment": {"sha256": "baseline-env"},
-            "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
+            "timing": {
+                "restore_seconds": 1,
+                "build_seconds": 2,
+                "end_to_end_seconds": 3,
+            },
         }
         candidate = {
             **baseline,
             "compiler_environment": {"sha256": "candidate-env"},
         }
 
-        with self.assertRaisesRegex(ValueError, "Mismatched compiler environment identity"):
+        with self.assertRaisesRegex(
+            ValueError, "Mismatched compiler environment identity"
+        ):
             compare_rolling_controls.compare(baseline, candidate, "Control")
 
     def test_reports_a_different_hosted_runner_cpu_without_claiming_attribution(self):
@@ -929,7 +949,11 @@ class RollingControlComparisonTest(unittest.TestCase):
                 },
             },
             "compiler_environment": {"sha256": "compiler-env"},
-            "timing": {"restore_seconds": 1, "build_seconds": 2, "end_to_end_seconds": 3},
+            "timing": {
+                "restore_seconds": 1,
+                "build_seconds": 2,
+                "end_to_end_seconds": 3,
+            },
         }
         candidate = {
             **baseline,

@@ -113,7 +113,15 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/deno-base-native-monolith
           started_at="$(date +%s)"
-          ./scripts/run-deno-build.sh 2>&1 | tee /tmp/deno-base-cli-monolith.log
+          if ! ./scripts/run-deno-build.sh \
+            > /tmp/deno-base-cargo-console-monolith.log \
+            2> /tmp/deno-base-cli-monolith.log; then
+            cat /tmp/deno-base-cargo-console-monolith.log
+            cat /tmp/deno-base-cli-monolith.log >&2
+            exit 1
+          fi
+          cat /tmp/deno-base-cargo-console-monolith.log
+          cat /tmp/deno-base-cli-monolith.log >&2
           elapsed="$(( $(date +%s) - started_at ))"
           echo "elapsed_seconds=${elapsed}" >> "$GITHUB_OUTPUT"
 
@@ -146,12 +154,14 @@ jobs:
           jq -n \
             --arg schema_version deno_boringcache_cargo_base.v1 \
             --arg transport monolith \
+            --arg producer boringcache-cargo \
+            --arg publication boringcache-cargo \
             --arg cli_version "${{ inputs.cli_version }}" \
             --arg target_tag "${{ steps.target-monolith.outputs.tag }}" \
             --argjson elapsed_seconds "${{ steps.publish-monolith.outputs.elapsed_seconds }}" \
             --argjson target_size_bytes "${{ steps.target-monolith.outputs.target_size_bytes }}" \
             --slurpfile inspection /tmp/deno-base-inspect-monolith.json \
-            '{schema_version: $schema_version, transport: $transport, cli_version: $cli_version, target_tag: $target_tag, elapsed_seconds: $elapsed_seconds, target_size_bytes: $target_size_bytes, archive: $inspection[0].entry}' \
+            '{schema_version: $schema_version, transport: $transport, producer: $producer, publication: $publication, cli_version: $cli_version, target_tag: $target_tag, elapsed_seconds: $elapsed_seconds, target_size_bytes: $target_size_bytes, archive: $inspection[0].entry}' \
             > benchmark-results/base-monolith.json
           cp /tmp/deno-base-cli-monolith.log "$evidence_dir/cli.log"
           cp /tmp/deno-base-cargo-monolith.jsonl "$evidence_dir/cargo.jsonl"
@@ -166,22 +176,30 @@ jobs:
             "-chunks" \
             ""
 
-      - name: Reuse and publish the same target as chunks through boringcache cargo
+      - name: Encode the frozen Cargo cohort as chunks through the archive CLI
         id: publish-chunks
         env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
           BORINGCACHE_ARCHIVE_GRAPH_WRITES: "1"
-          DENO_USE_BORINGCACHE_CARGO: "1"
-          DENO_BORINGCACHE_CARGO_ACCESS: publish
-          DENO_BORINGCACHE_METADATA_PHASE: base-chunks
-          DENO_BORINGCACHE_NATIVE_EVIDENCE_DIR: /tmp/deno-base-native-chunks
-          DENO_CARGO_EVIDENCE_FILE: /tmp/deno-base-cargo-chunks.jsonl
         run: |
           set -euo pipefail
-          mkdir -p /tmp/deno-base-native-chunks
+          cargo_home="${CARGO_HOME:-${HOME}/.cargo}"
+          scope="r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}-chunks"
+          entries=(
+            --entry "deno-cargo-target-${scope}:upstream/target"
+          )
+          if [[ -d "${cargo_home}/registry" ]]; then
+            entries+=(--entry "deno-cargo-registry-${scope}:${cargo_home}/registry")
+          fi
+          if [[ -d "${cargo_home}/git" ]]; then
+            entries+=(--entry "deno-cargo-git-${scope}:${cargo_home}/git")
+          fi
           started_at="$(date +%s)"
-          ./scripts/run-deno-build.sh 2>&1 | tee /tmp/deno-base-cli-chunks.log
+          boringcache save "$BENCHMARK_WORKSPACE" \
+            "${entries[@]}" \
+            --no-git \
+            --fail-on-cache-error \
+            2>&1 | tee /tmp/deno-base-cli-chunks.log
           elapsed="$(( $(date +%s) - started_at ))"
           echo "elapsed_seconds=${elapsed}" >> "$GITHUB_OUTPUT"
 
@@ -234,16 +252,16 @@ jobs:
           jq -n \
             --arg schema_version deno_boringcache_cargo_base.v1 \
             --arg transport chunks \
+            --arg producer boringcache-cargo \
+            --arg publication boringcache-save \
             --arg cli_version "${{ inputs.cli_version }}" \
             --arg target_tag "${{ steps.target-chunks.outputs.tag }}" \
             --argjson elapsed_seconds "${{ steps.publish-chunks.outputs.elapsed_seconds }}" \
             --argjson target_size_bytes "${{ steps.target-chunks.outputs.target_size_bytes }}" \
             --slurpfile inspection /tmp/deno-base-inspect-chunks.json \
-            '{schema_version: $schema_version, transport: $transport, cli_version: $cli_version, target_tag: $target_tag, elapsed_seconds: $elapsed_seconds, target_size_bytes: $target_size_bytes, archive: $inspection[0].entry}' \
+            '{schema_version: $schema_version, transport: $transport, producer: $producer, publication: $publication, cli_version: $cli_version, target_tag: $target_tag, elapsed_seconds: $elapsed_seconds, target_size_bytes: $target_size_bytes, archive: $inspection[0].entry}' \
             > benchmark-results/base-chunks.json
           cp /tmp/deno-base-cli-chunks.log "$evidence_dir/cli.log"
-          cp /tmp/deno-base-cargo-chunks.jsonl "$evidence_dir/cargo.jsonl"
-          cp /tmp/deno-base-native-chunks/*.json "$evidence_dir/"
 
       - name: Upload base evidence
         uses: actions/upload-artifact@v6
@@ -368,7 +386,15 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/deno-rolling-native
           started_at="$(date +%s)"
-          ./scripts/run-deno-build.sh 2>&1 | tee "/tmp/deno-rolling-cli-${{ matrix.transport }}.log"
+          if ! ./scripts/run-deno-build.sh \
+            > "/tmp/deno-rolling-cargo-console-${{ matrix.transport }}.log" \
+            2> "/tmp/deno-rolling-cli-${{ matrix.transport }}.log"; then
+            cat "/tmp/deno-rolling-cargo-console-${{ matrix.transport }}.log"
+            cat "/tmp/deno-rolling-cli-${{ matrix.transport }}.log" >&2
+            exit 1
+          fi
+          cat "/tmp/deno-rolling-cargo-console-${{ matrix.transport }}.log"
+          cat "/tmp/deno-rolling-cli-${{ matrix.transport }}.log" >&2
           elapsed="$(( $(date +%s) - started_at ))"
           echo "elapsed_seconds=${elapsed}" >> "$GITHUB_OUTPUT"
 

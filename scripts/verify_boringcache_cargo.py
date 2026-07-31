@@ -89,7 +89,9 @@ def verify_source_freshness(
         else:
             changed += 1
             if path.lstat().st_mtime_ns <= ceiling:
-                mismatches.append(f"changed source is not newer than target: {relative_path}")
+                mismatches.append(
+                    f"changed source is not newer than target: {relative_path}"
+                )
 
     if mismatches:
         raise ValueError("; ".join(mismatches[:10]))
@@ -123,12 +125,19 @@ def parse_cargo_messages(path: Path) -> dict[str, int | bool]:
     fresh: set[str] = set()
     rebuilt: set[str] = set()
     build_finished = False
-    for line in path.read_text().splitlines():
-        if not line.startswith("{"):
+    for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+        if not line.strip():
             continue
-        message = json.loads(line)
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                f"Cargo stdout line {line_number} is not JSON: {line!r}"
+            ) from error
         if message.get("reason") == "compiler-artifact":
-            label = f"{message.get('package_id')}:{message.get('target', {}).get('name')}"
+            label = (
+                f"{message.get('package_id')}:{message.get('target', {}).get('name')}"
+            )
             (fresh if message.get("fresh") is True else rebuilt).add(label)
         elif message.get("reason") == "build-finished":
             build_finished = build_finished or message.get("success") is True
@@ -165,7 +174,9 @@ def verify_sccache(directory: Path) -> dict[str, int | float]:
             totals[key] += int(evidence.get(key) or 0)
     attempts = totals["cache_hits"] + totals["cache_misses"]
     if totals["compile_requests"] == 0 or attempts == 0:
-        raise ValueError("The rolling build produced no native sccache request evidence")
+        raise ValueError(
+            "The rolling build produced no native sccache request evidence"
+        )
     if totals["cache_read_errors"] or totals["cache_timeouts"]:
         raise ValueError("The rolling build reported sccache read errors or timeouts")
     return {
