@@ -79,8 +79,13 @@ def verify_source_freshness(
         stored_entry = stored.get(path_hex)
         if stored_entry and stored_entry["content_identity"] == identity:
             reused += 1
-            if path.stat().st_mtime_ns != mtime_ns(stored_entry["mtime"]):
-                mismatches.append(f"unchanged mtime differs: {relative_path}")
+            actual_mtime = path.stat().st_mtime_ns
+            expected_mtime = mtime_ns(stored_entry["mtime"])
+            if actual_mtime != expected_mtime:
+                mismatches.append(
+                    "unchanged mtime differs: "
+                    f"{relative_path} (actual={actual_mtime}, expected={expected_mtime})"
+                )
         else:
             changed += 1
             if path.stat().st_mtime_ns <= ceiling:
@@ -158,11 +163,11 @@ def verify_sccache(directory: Path) -> dict[str, int | float]:
             raise ValueError(f"Unexpected native evidence tool in {path}")
         for key in totals:
             totals[key] += int(evidence.get(key) or 0)
-    if totals["compile_requests"] == 0 or totals["cache_hits"] == 0:
-        raise ValueError("The rolling build produced no native sccache hit evidence")
+    attempts = totals["cache_hits"] + totals["cache_misses"]
+    if totals["compile_requests"] == 0 or attempts == 0:
+        raise ValueError("The rolling build produced no native sccache request evidence")
     if totals["cache_read_errors"] or totals["cache_timeouts"]:
         raise ValueError("The rolling build reported sccache read errors or timeouts")
-    attempts = totals["cache_hits"] + totals["cache_misses"]
     return {
         **totals,
         "hit_rate": round(totals["cache_hits"] * 100 / attempts, 2)

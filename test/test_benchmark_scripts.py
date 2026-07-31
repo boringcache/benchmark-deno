@@ -264,6 +264,31 @@ class BoringCacheCargoEvidenceTest(unittest.TestCase):
             self.assertEqual(sccache["cache_hits"], 8)
             self.assertEqual(sccache["hit_rate"], 80.0)
 
+    def test_accepts_novel_rolling_sccache_misses_without_synthetic_prewarming(self):
+        with tempfile.TemporaryDirectory() as directory:
+            native = Path(directory)
+            for phase in ("primary", "desktop"):
+                (native / f"{phase}.json").write_text(
+                    json.dumps(
+                        {
+                            "schema_version": "native_tool_evidence.v1",
+                            "tool": "sccache",
+                            "compile_requests": 6,
+                            "cache_hits": 0,
+                            "cache_misses": 3,
+                            "cache_read_errors": 0,
+                            "cache_write_errors": 0,
+                            "cache_timeouts": 0,
+                        }
+                    )
+                )
+
+            sccache = verify_boringcache_cargo.verify_sccache(native)
+
+            self.assertEqual(sccache["cache_hits"], 0)
+            self.assertEqual(sccache["cache_misses"], 6)
+            self.assertEqual(sccache["hit_rate"], 0.0)
+
     def test_comparison_formats_gibibytes_without_claiming_attribution(self):
         self.assertEqual(
             render_cargo_transport_comparison.gib(5 * 1024**3), "5.00 GiB"
