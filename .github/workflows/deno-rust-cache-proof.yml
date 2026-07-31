@@ -31,6 +31,11 @@ on:
         required: false
         type: string
         default: ""
+      cargo_seed_sccache_run_id:
+        description: Optional run whose BoringCache/mise base sccache entries seed the rolling comparison.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   actions: write
@@ -79,6 +84,7 @@ jobs:
     uses: ./.github/workflows/deno-cargo-archive-chunks.yml
     with:
       cli_version: ${{ inputs.cli_version }}
+      source_run_id: ${{ inputs.cargo_seed_sccache_run_id || '30333408848' }}
       seed_target_tag: ${{ inputs.cargo_seed_target_tag || 'deno-actions-target-r30339284716-a1-branch-deno-cache-followups-ubuntu-24-x86_64' }}
       seed_registry_tag: ${{ inputs.cargo_seed_registry_tag || 'deno-actions-cargo-registry-r30339284716-a1-branch-deno-cache-followups-ubuntu-24-x86_64' }}
     secrets: inherit

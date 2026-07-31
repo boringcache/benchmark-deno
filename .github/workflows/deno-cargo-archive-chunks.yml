@@ -308,7 +308,7 @@ jobs:
             "r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}" \
             "r${SOURCE_RUN_ID}-a${SOURCE_RUN_ATTEMPT}" \
             "${{ matrix.suffix }}" \
-            ""
+            "${{ matrix.suffix }}"
 
       - name: Install exact sccache
         run: ./scripts/install-sccache.sh 0.16.0
@@ -320,7 +320,7 @@ jobs:
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
         run: |
-          sccache_tag="deno-rust-cache-r${SOURCE_RUN_ID}-a${SOURCE_RUN_ATTEMPT}"
+          sccache_tag="deno-rust-cache-r${SOURCE_RUN_ID}-a${SOURCE_RUN_ATTEMPT}${{ matrix.suffix }}"
           boringcache check "$BENCHMARK_WORKSPACE" "$sccache_tag" --no-git --json \
             | tee /tmp/deno-rolling-sccache-check.json
           jq -e '.results[] | select(.status == "hit" and .kv_entry_count > 0)' \

@@ -58,6 +58,10 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
         self.assertNotIn("uses: dtolnay/rust-toolchain@", workflow)
         dispatcher = (ROOT / ".github/workflows/deno-rust-cache-proof.yml").read_text()
         self.assertIn("- cargo-archive-chunks", dispatcher)
+        self.assertIn("cargo_seed_sccache_run_id:", dispatcher)
+        self.assertIn(
+            "source_run_id: ${{ inputs.cargo_seed_sccache_run_id", dispatcher
+        )
         self.assertIn(
             "uses: ./.github/workflows/deno-cargo-archive-chunks.yml", dispatcher
         )
@@ -71,6 +75,10 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
         self.assertIn("install-sccache.sh 0.16.0", workflow)
         self.assertIn("verify_boringcache_cargo.py", workflow)
         self.assertIn("Require the existing sccache seed", workflow)
+        self.assertIn(
+            'sccache_tag="deno-rust-cache-r${SOURCE_RUN_ID}-a${SOURCE_RUN_ATTEMPT}${{ matrix.suffix }}"',
+            workflow,
+        )
         self.assertIn('.kv_entry_count > 0', workflow)
         self.assertIn('test ! -e upstream/target', workflow)
         self.assertIn('test -x upstream/target/release/deno', workflow)
