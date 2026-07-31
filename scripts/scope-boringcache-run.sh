@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 scope="${1:-}"
 sccache_scope="${2:-$scope}"
 archive_suffix="${3:-}"
-sccache_suffix="${4:-$archive_suffix}"
+sccache_suffix="${4-$archive_suffix}"
 
 if [[ ! "$scope" =~ ^r[0-9]+-a[0-9]+$ ]]; then
   echo "Expected a run scope such as r123-a1, got: ${scope:-<empty>}" >&2
