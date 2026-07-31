@@ -21,6 +21,16 @@ on:
           - release-full-target
           - debug-full-target
           - cargo-archive-chunks
+      cargo_seed_target_tag:
+        description: Optional exact signed target used to bootstrap the Cargo archive comparison.
+        required: false
+        type: string
+        default: ""
+      cargo_seed_registry_tag:
+        description: Optional exact signed registry used to bootstrap the Cargo archive comparison.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   actions: write
@@ -69,6 +79,8 @@ jobs:
     uses: ./.github/workflows/deno-cargo-archive-chunks.yml
     with:
       cli_version: ${{ inputs.cli_version }}
+      seed_target_tag: ${{ inputs.cargo_seed_target_tag || 'deno-actions-target-r30339284716-a1-branch-deno-cache-followups-ubuntu-24-x86_64' }}
+      seed_registry_tag: ${{ inputs.cargo_seed_registry_tag || 'deno-actions-cargo-registry-r30339284716-a1-branch-deno-cache-followups-ubuntu-24-x86_64' }}
     secrets: inherit
 
   compare:
