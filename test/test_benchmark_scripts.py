@@ -177,16 +177,37 @@ class BoringCacheCargoEvidenceTest(unittest.TestCase):
             subprocess.run(["git", "init", "-q", str(source)], check=True)
             unchanged = source / "unchanged.rs"
             changed = source / "changed.rs"
+            symlink_target = source / "symlink-target.rs"
+            symlink = source / "symlink.rs"
             unchanged.write_text("unchanged\n")
             changed.write_text("before\n")
+            symlink_target.write_text("target\n")
+            symlink.symlink_to(symlink_target.name)
             subprocess.run(
-                ["git", "-C", str(source), "add", "unchanged.rs", "changed.rs"],
+                [
+                    "git",
+                    "-C",
+                    str(source),
+                    "add",
+                    "unchanged.rs",
+                    "changed.rs",
+                    "symlink.rs",
+                ],
                 check=True,
             )
             base_index = verify_boringcache_cargo.git_index(source)
             unchanged_ns = 1_700_000_000_123_456_789
             changed_ns = 1_800_000_000_123_456_789
             os.utime(unchanged, ns=(unchanged_ns, unchanged_ns))
+            os.utime(
+                symlink,
+                ns=(unchanged_ns, unchanged_ns),
+                follow_symlinks=False,
+            )
+            os.utime(
+                symlink_target,
+                ns=(changed_ns, changed_ns),
+            )
             changed.write_text("after\n")
             subprocess.run(
                 ["git", "-C", str(source), "add", "changed.rs"], check=True
@@ -220,7 +241,7 @@ class BoringCacheCargoEvidenceTest(unittest.TestCase):
             )
             log = root / "cli.log"
             log.write_text(
-                "[boringcache] Cargo source freshness restored: 1 unchanged, "
+                "[boringcache] Cargo source freshness restored: 2 unchanged, "
                 "1 changed/new; directories: 1 unchanged, 1 changed/new\n"
             )
 
@@ -228,7 +249,7 @@ class BoringCacheCargoEvidenceTest(unittest.TestCase):
                 source, target, log
             )
 
-            self.assertEqual(evidence["reused"], 1)
+            self.assertEqual(evidence["reused"], 2)
             self.assertEqual(evidence["changed"], 1)
 
     def test_verifies_signed_chunk_layout_and_native_sccache_hits(self):

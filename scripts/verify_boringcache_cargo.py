@@ -79,7 +79,7 @@ def verify_source_freshness(
         stored_entry = stored.get(path_hex)
         if stored_entry and stored_entry["content_identity"] == identity:
             reused += 1
-            actual_mtime = path.stat().st_mtime_ns
+            actual_mtime = path.lstat().st_mtime_ns
             expected_mtime = mtime_ns(stored_entry["mtime"])
             if actual_mtime != expected_mtime:
                 mismatches.append(
@@ -88,7 +88,7 @@ def verify_source_freshness(
                 )
         else:
             changed += 1
-            if path.stat().st_mtime_ns <= ceiling:
+            if path.lstat().st_mtime_ns <= ceiling:
                 mismatches.append(f"changed source is not newer than target: {relative_path}")
 
     if mismatches:
