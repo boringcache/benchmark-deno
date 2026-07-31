@@ -128,6 +128,20 @@ sccache. The report refuses to compare different runner image releases, CPU
 models, core counts, memory classes, or compiler environments, and includes
 exact target freshness plus native hit/miss counts.
 
+The **Deno Cargo archive chunks canary** is the first-class product proof. An
+exact immutable CLI runs the pinned base and adjacent head entirely through
+`boringcache cargo`; the CLI owns target transport, source freshness, Cargo
+registry and Git state, and the sccache proxy. One local base target is
+published as both the ordinary GNU-tar archive and `archive-chunks-v1`, then
+fresh rolling runners consume each representation through the same command.
+The workflow only scopes run-specific tags and verifies the signed result,
+Cargo JSON evidence, exact source mtimes, and native sccache counters.
+
+This canary does not run Deno's mtime Action or manually restore/save any Cargo
+surface. Its two Deno Cargo phases use the CLI's explicit lifecycle flags:
+restore happens on the first phase, save happens on the final phase, and both
+phases share the same target and sccache product plan.
+
 ## Run it
 
 The repository needs these Actions secrets:
@@ -136,11 +150,11 @@ The repository needs these Actions secrets:
 - `BORINGCACHE_SAVE_TOKEN`
 
 Run **Deno release hybrid cache proof**, **Deno Linux debug cache proof**,
-either full-target proof, or **Deno release sccache plus target cohort** from
-the Actions tab. The optional `cli_version` input can pin a canary CLI release.
-Full-target proofs also require the completed source proof run ID whose seed
-and Actions result should be reused. Each proof publishes one comparison table
-and JSON artifact.
+either full-target proof, **Deno release sccache plus target cohort**, or
+**Deno Cargo archive chunks canary** from the Actions tab. The optional
+`cli_version` input can pin a canary CLI release. Full-target proofs also
+require the completed source proof run ID whose seed and Actions result should
+be reused. Each proof publishes one comparison table and JSON artifact.
 
 The target identity control additionally takes the completed full-target run
 that owns the promoted archive and the source run that owns the paired Actions
