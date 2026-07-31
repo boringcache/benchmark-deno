@@ -8,7 +8,9 @@ export CARGO_INCREMENTAL=0
 export DENO_CANARY=true
 export DENO_SNAPSHOT_MINIFY_SOURCES=1
 
-DENO_CARGO_PHASE=primary "${repo_root}/scripts/run-cargo-build.sh" --release --locked \
+DENO_CARGO_PHASE=primary \
+  DENO_BORINGCACHE_SKIP_SAVE=1 \
+  "${repo_root}/scripts/run-cargo-build.sh" --release --locked \
   -p deno \
   -p denort \
   -p test_server \
@@ -17,6 +19,8 @@ DENO_CARGO_PHASE=primary "${repo_root}/scripts/run-cargo-build.sh" --release --l
   --bin test_server \
   --features=deno/panic-trace
 
-DENO_CARGO_PHASE=desktop "${repo_root}/scripts/run-cargo-build.sh" --release --locked -p denort_desktop
+DENO_CARGO_PHASE=desktop \
+  DENO_BORINGCACHE_SKIP_RESTORE=1 \
+  "${repo_root}/scripts/run-cargo-build.sh" --release --locked -p denort_desktop
 
 target/release/deno --version

@@ -92,6 +92,59 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
         )
         self.assertIn('[profiles.rust-toolchain]\nentries = ["rust-toolchain"]', config)
 
+    def test_release_build_restores_once_and_saves_only_after_the_final_phase(self):
+        release_build = (ROOT / "scripts/run-deno-release-build.sh").read_text()
+
+        self.assertIn('DENO_BORINGCACHE_SKIP_SAVE=1', release_build)
+        self.assertIn('DENO_BORINGCACHE_SKIP_RESTORE=1', release_build)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            args_log = root / "args.log"
+            boringcache = bin_dir / "boringcache"
+            boringcache.write_text(
+                '#!/usr/bin/env bash\nprintf \'%s\\n\' "$@" > "$BORINGCACHE_ARGS_LOG"\n'
+            )
+            boringcache.chmod(0o755)
+
+            def wrapped_args(access: str, **overrides: str) -> list[str]:
+                env = {
+                    **os.environ,
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                    "BORINGCACHE_ARGS_LOG": str(args_log),
+                    "DENO_USE_BORINGCACHE_CARGO": "1",
+                    "DENO_BORINGCACHE_CARGO_ACCESS": access,
+                    **overrides,
+                }
+                subprocess.run(
+                    [str(ROOT / "scripts/run-cargo-build.sh"), "--release"],
+                    check=True,
+                    env=env,
+                )
+                return args_log.read_text().splitlines()
+
+            primary_publish = wrapped_args(
+                "publish", DENO_BORINGCACHE_SKIP_SAVE="1"
+            )
+            final_publish = wrapped_args(
+                "publish", DENO_BORINGCACHE_SKIP_RESTORE="1"
+            )
+            primary_consume = wrapped_args("consume")
+            final_consume = wrapped_args(
+                "consume", DENO_BORINGCACHE_SKIP_RESTORE="1"
+            )
+
+        self.assertIn("--skip-save", primary_publish)
+        self.assertNotIn("--skip-save", final_publish)
+        self.assertIn("--skip-restore", primary_publish)
+        self.assertIn("--skip-restore", final_publish)
+        self.assertNotIn("--skip-restore", primary_consume)
+        self.assertIn("--skip-restore", final_consume)
+        self.assertIn("--read-only", primary_consume)
+        self.assertEqual(final_consume[-2:], ["build", "--release"])
+
 
 class BoringCacheCargoEvidenceTest(unittest.TestCase):
     def test_verifies_transported_source_mtimes_against_git_identity(self):

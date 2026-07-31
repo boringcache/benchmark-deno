@@ -6,15 +6,27 @@ if [[ "${DENO_USE_BORINGCACHE_CARGO:-0}" == "1" ]]; then
   command=(boringcache cargo --fail-on-cache-error)
   case "${DENO_BORINGCACHE_CARGO_ACCESS:-}" in
     publish)
-      command+=(--write --skip-restore)
+      command+=(--write)
+      default_skip_restore=1
       ;;
     consume)
       command+=(--read-only)
+      default_skip_restore=0
       ;;
     *)
       echo "DENO_BORINGCACHE_CARGO_ACCESS must be publish or consume" >&2
       exit 1
       ;;
+  esac
+  case "${DENO_BORINGCACHE_SKIP_RESTORE:-${default_skip_restore}}" in
+    0) ;;
+    1) command+=(--skip-restore) ;;
+    *) echo "DENO_BORINGCACHE_SKIP_RESTORE must be 0 or 1" >&2; exit 1 ;;
+  esac
+  case "${DENO_BORINGCACHE_SKIP_SAVE:-0}" in
+    0) ;;
+    1) command+=(--skip-save) ;;
+    *) echo "DENO_BORINGCACHE_SKIP_SAVE must be 0 or 1" >&2; exit 1 ;;
   esac
   if [[ -n "${DENO_BORINGCACHE_NATIVE_EVIDENCE_DIR:-}" ]]; then
     phase="${DENO_CARGO_PHASE:-build}"
