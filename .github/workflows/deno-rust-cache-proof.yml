@@ -20,6 +20,7 @@ on:
           - release-sccache
           - release-full-target
           - debug-full-target
+          - cargo-archive-chunks
 
 permissions:
   actions: write
@@ -28,7 +29,7 @@ permissions:
 jobs:
   actions-cache:
     name: Actions cache baseline
-    if: ${{ !endsWith(inputs.experiment, '-full-target') }}
+    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-archive-chunks' }}
     uses: ./.github/workflows/deno-actions-cache.yml
     with:
       benchmark_id: ${{ inputs.experiment == 'debug' && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
@@ -38,7 +39,7 @@ jobs:
 
   boringcache:
     name: BoringCache candidate
-    if: ${{ !endsWith(inputs.experiment, '-full-target') }}
+    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-archive-chunks' }}
     uses: ./.github/workflows/deno-boringcache.yml
     with:
       benchmark_id: ${{ inputs.experiment == 'debug' && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
@@ -62,9 +63,17 @@ jobs:
       cli_version: ${{ inputs.cli_version }}
     secrets: inherit
 
+  cargo-archive-chunks:
+    name: BoringCache Cargo chunks vs monolith
+    if: ${{ inputs.experiment == 'cargo-archive-chunks' }}
+    uses: ./.github/workflows/deno-cargo-archive-chunks.yml
+    with:
+      cli_version: ${{ inputs.cli_version }}
+    secrets: inherit
+
   compare:
     name: Compare results
-    if: ${{ !endsWith(inputs.experiment, '-full-target') }}
+    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-archive-chunks' }}
     needs: [actions-cache, boringcache]
     runs-on: ubuntu-24.04
     env:

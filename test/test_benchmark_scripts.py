@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,6 +27,162 @@ compare_rolling_controls = load_script("compare_rolling_controls.py")
 verify_restored_freshness = load_script("verify_restored_freshness.py")
 snapshot_target_state = load_script("snapshot_target_state.py")
 compare_target_snapshots = load_script("compare_target_snapshots.py")
+verify_boringcache_cargo = load_script("verify_boringcache_cargo.py")
+render_cargo_transport_comparison = load_script(
+    "render_cargo_transport_comparison.py"
+)
+
+
+class CargoArchiveChunksWorkflowTest(unittest.TestCase):
+    def test_compares_only_the_generic_archive_transport(self):
+        workflow = (
+            ROOT / ".github/workflows/deno-cargo-archive-chunks.yml"
+        ).read_text()
+
+        self.assertIn("transport: chunks", workflow)
+        self.assertIn("transport: monolith", workflow)
+        self.assertIn("DENO_USE_BORINGCACHE_CARGO: \"1\"", workflow)
+        self.assertIn("DENO_BORINGCACHE_CARGO_ACCESS: publish", workflow)
+        self.assertIn("DENO_BORINGCACHE_CARGO_ACCESS: consume", workflow)
+        self.assertIn("BORINGCACHE_ARCHIVE_GRAPH_WRITES", workflow)
+        self.assertIn("Restore the exact signed base archives", workflow)
+        self.assertIn('storage_mode == "archive"', workflow)
+        self.assertNotIn("uses: actions/cache/restore@", workflow)
+        self.assertNotIn("uses: boringcache/one@", workflow)
+        dispatcher = (ROOT / ".github/workflows/deno-rust-cache-proof.yml").read_text()
+        self.assertIn("- cargo-archive-chunks", dispatcher)
+        self.assertIn(
+            "uses: ./.github/workflows/deno-cargo-archive-chunks.yml", dispatcher
+        )
+
+    def test_uses_an_exact_canary_and_native_product_evidence(self):
+        workflow = (
+            ROOT / ".github/workflows/deno-cargo-archive-chunks.yml"
+        ).read_text()
+
+        self.assertIn("install-boringcache-canary.sh", workflow)
+        self.assertIn("install-sccache.sh 0.16.0", workflow)
+        self.assertIn("verify_boringcache_cargo.py", workflow)
+        self.assertIn("Require the existing sccache seed", workflow)
+        self.assertIn('.kv_entry_count > 0', workflow)
+        self.assertIn('test ! -e upstream/target', workflow)
+        self.assertIn('test -x upstream/target/release/deno', workflow)
+
+
+class BoringCacheCargoEvidenceTest(unittest.TestCase):
+    def test_verifies_transported_source_mtimes_against_git_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            target = root / "target"
+            source.mkdir()
+            (target / ".boringcache").mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(source)], check=True)
+            unchanged = source / "unchanged.rs"
+            changed = source / "changed.rs"
+            unchanged.write_text("unchanged\n")
+            changed.write_text("before\n")
+            subprocess.run(
+                ["git", "-C", str(source), "add", "unchanged.rs", "changed.rs"],
+                check=True,
+            )
+            base_index = verify_boringcache_cargo.git_index(source)
+            unchanged_ns = 1_700_000_000_123_456_789
+            changed_ns = 1_800_000_000_123_456_789
+            os.utime(unchanged, ns=(unchanged_ns, unchanged_ns))
+            changed.write_text("after\n")
+            subprocess.run(
+                ["git", "-C", str(source), "add", "changed.rs"], check=True
+            )
+            os.utime(changed, ns=(changed_ns, changed_ns))
+
+            entries = []
+            for path_hex, identity in base_index.items():
+                entries.append(
+                    {
+                        "path_bytes_hex": path_hex,
+                        "content_identity": identity,
+                        "mtime": {
+                            "seconds": unchanged_ns // 1_000_000_000,
+                            "nanoseconds": unchanged_ns % 1_000_000_000,
+                        },
+                    }
+                )
+            manifest = {
+                "format_version": 2,
+                "source_identity": "git-index-v2",
+                "artifact_mtime_ceiling": {
+                    "seconds": 1_750_000_000,
+                    "nanoseconds": 0,
+                },
+                "entries": entries,
+                "directories": [],
+            }
+            (target / ".boringcache/cargo-freshness-v2.json").write_text(
+                json.dumps(manifest)
+            )
+            log = root / "cli.log"
+            log.write_text(
+                "[boringcache] Cargo source freshness restored: 1 unchanged, "
+                "1 changed/new; directories: 1 unchanged, 1 changed/new\n"
+            )
+
+            evidence = verify_boringcache_cargo.verify_source_freshness(
+                source, target, log
+            )
+
+            self.assertEqual(evidence["reused"], 1)
+            self.assertEqual(evidence["changed"], 1)
+
+    def test_verifies_signed_chunk_layout_and_native_sccache_hits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inspection = root / "inspect.json"
+            inspection.write_text(
+                json.dumps(
+                    {
+                        "entry": {
+                            "status": "ready",
+                            "storage_mode": "cas",
+                            "cas_layout": "archive-chunks-v1",
+                            "server_signed": True,
+                            "storage_verified": True,
+                            "blob_count": 4,
+                            "stored_size_bytes": 1024,
+                            "manifest_root_digest": "sha256:root",
+                        }
+                    }
+                )
+            )
+            native = root / "native"
+            native.mkdir()
+            for phase in ("primary", "desktop"):
+                (native / f"{phase}.json").write_text(
+                    json.dumps(
+                        {
+                            "schema_version": "native_tool_evidence.v1",
+                            "tool": "sccache",
+                            "compile_requests": 5,
+                            "cache_hits": 4,
+                            "cache_misses": 1,
+                            "cache_read_errors": 0,
+                            "cache_write_errors": 1,
+                            "cache_timeouts": 0,
+                        }
+                    )
+                )
+
+            archive = verify_boringcache_cargo.verify_archive(inspection, "chunks")
+            sccache = verify_boringcache_cargo.verify_sccache(native)
+
+            self.assertEqual(archive["cas_layout"], "archive-chunks-v1")
+            self.assertEqual(sccache["cache_hits"], 8)
+            self.assertEqual(sccache["hit_rate"], 80.0)
+
+    def test_comparison_formats_gibibytes_without_claiming_attribution(self):
+        self.assertEqual(
+            render_cargo_transport_comparison.gib(5 * 1024**3), "5.00 GiB"
+        )
 
 
 class SccacheTargetCohortWorkflowTest(unittest.TestCase):

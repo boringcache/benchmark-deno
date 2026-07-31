@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 scope="${1:-}"
 sccache_scope="${2:-$scope}"
+archive_suffix="${3:-}"
+sccache_suffix="${4:-$archive_suffix}"
 
 if [[ ! "$scope" =~ ^r[0-9]+-a[0-9]+$ ]]; then
   echo "Expected a run scope such as r123-a1, got: ${scope:-<empty>}" >&2
@@ -13,16 +15,26 @@ if [[ ! "$sccache_scope" =~ ^r[0-9]+-a[0-9]+$ ]]; then
   echo "Expected an sccache scope such as r123-a1, got: ${sccache_scope:-<empty>}" >&2
   exit 1
 fi
+if [[ -n "$archive_suffix" && ! "$archive_suffix" =~ ^-[a-z0-9-]+$ ]]; then
+  echo "Expected an archive suffix such as -chunks, got: ${archive_suffix}" >&2
+  exit 1
+fi
+if [[ -n "$sccache_suffix" && ! "$sccache_suffix" =~ ^-[a-z0-9-]+$ ]]; then
+  echo "Expected an sccache suffix such as -chunks, got: ${sccache_suffix}" >&2
+  exit 1
+fi
 
 config_path="${repo_root}/.boringcache.toml"
 for base_tag in \
   deno-cargo-registry \
+  deno-cargo-git \
+  deno-cargo-target \
   deno-release-lto-cache \
   deno-actions-cargo-registry \
   deno-actions-cargo-bin \
   deno-actions-target; do
   old_tag="${base_tag}-local"
-  new_tag="${base_tag}-${scope}"
+  new_tag="${base_tag}-${scope}${archive_suffix}"
   if ! grep -Fq "tag = \"${old_tag}\"" "$config_path"; then
     echo "Missing expected local tag in ${config_path}: ${old_tag}" >&2
     exit 1
@@ -31,11 +43,11 @@ for base_tag in \
 done
 
 sccache_old_tag="deno-rust-cache-local"
-sccache_new_tag="deno-rust-cache-${sccache_scope}"
+sccache_new_tag="deno-rust-cache-${sccache_scope}${sccache_suffix}"
 if ! grep -Fq "tag = \"${sccache_old_tag}\"" "$config_path"; then
   echo "Missing expected local tag in ${config_path}: ${sccache_old_tag}" >&2
   exit 1
 fi
 sed -i "s/tag = \"${sccache_old_tag}\"/tag = \"${sccache_new_tag}\"/" "$config_path"
 
-echo "Scoped archive tags to ${scope} and sccache to ${sccache_scope}."
+echo "Scoped archive tags to ${scope}${archive_suffix} and sccache to ${sccache_scope}${sccache_suffix}."
