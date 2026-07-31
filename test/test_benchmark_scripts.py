@@ -45,8 +45,19 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
         self.assertIn("DENO_BORINGCACHE_CARGO_ACCESS: publish", workflow)
         self.assertIn("DENO_BORINGCACHE_CARGO_ACCESS: consume", workflow)
         self.assertIn("BORINGCACHE_ARCHIVE_GRAPH_WRITES", workflow)
-        self.assertIn("Restore the exact signed base archives", workflow)
+        self.assertIn("Require a clean product starting point", workflow)
+        self.assertIn(
+            "Build and publish the monolith through boringcache cargo", workflow
+        )
+        self.assertIn(
+            "Reuse and publish the same target as chunks through boringcache cargo",
+            workflow,
+        )
         self.assertIn('storage_mode == "archive"', workflow)
+        self.assertNotIn("run-deno-mtime-cache.js", workflow)
+        self.assertNotIn("seed_target_tag", workflow)
+        self.assertNotIn("seed_registry_tag", workflow)
+        self.assertNotIn("boringcache restore", workflow)
         self.assertNotIn("uses: actions/cache/restore@", workflow)
         self.assertIn(
             "uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e",
@@ -59,6 +70,8 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
         dispatcher = (ROOT / ".github/workflows/deno-rust-cache-proof.yml").read_text()
         self.assertIn("- cargo-archive-chunks", dispatcher)
         self.assertIn("cargo_seed_sccache_run_id:", dispatcher)
+        self.assertNotIn("cargo_seed_target_tag:", dispatcher)
+        self.assertNotIn("cargo_seed_registry_tag:", dispatcher)
         self.assertIn(
             "source_run_id: ${{ inputs.cargo_seed_sccache_run_id", dispatcher
         )
@@ -100,7 +113,7 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
         )
         self.assertIn('[profiles.rust-toolchain]\nentries = ["rust-toolchain"]', config)
 
-    def test_release_build_restores_once_and_saves_only_after_the_final_phase(self):
+    def test_release_build_uses_one_restore_and_saves_only_after_the_final_phase(self):
         release_build = (ROOT / "scripts/run-deno-release-build.sh").read_text()
 
         self.assertIn('DENO_BORINGCACHE_SKIP_SAVE=1', release_build)
@@ -146,7 +159,7 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
 
         self.assertIn("--skip-save", primary_publish)
         self.assertNotIn("--skip-save", final_publish)
-        self.assertIn("--skip-restore", primary_publish)
+        self.assertNotIn("--skip-restore", primary_publish)
         self.assertIn("--skip-restore", final_publish)
         self.assertNotIn("--skip-restore", primary_consume)
         self.assertIn("--skip-restore", final_consume)

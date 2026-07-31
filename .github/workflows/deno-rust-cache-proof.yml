@@ -21,16 +21,6 @@ on:
           - release-full-target
           - debug-full-target
           - cargo-archive-chunks
-      cargo_seed_target_tag:
-        description: Optional exact signed target used to bootstrap the Cargo archive comparison.
-        required: false
-        type: string
-        default: ""
-      cargo_seed_registry_tag:
-        description: Optional exact signed registry used to bootstrap the Cargo archive comparison.
-        required: false
-        type: string
-        default: ""
       cargo_seed_sccache_run_id:
         description: Optional run whose BoringCache/mise base sccache entries seed the rolling comparison.
         required: false
@@ -85,8 +75,6 @@ jobs:
     with:
       cli_version: ${{ inputs.cli_version }}
       source_run_id: ${{ inputs.cargo_seed_sccache_run_id || '30333408848' }}
-      seed_target_tag: ${{ inputs.cargo_seed_target_tag || 'deno-actions-target-r30339284716-a1-branch-deno-cache-followups-ubuntu-24-x86_64' }}
-      seed_registry_tag: ${{ inputs.cargo_seed_registry_tag || 'deno-actions-cargo-registry-r30339284716-a1-branch-deno-cache-followups-ubuntu-24-x86_64' }}
     secrets: inherit
 
   compare:

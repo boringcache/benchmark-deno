@@ -18,16 +18,6 @@ on:
         required: false
         type: string
         default: "1"
-      seed_target_tag:
-        description: Exact signed BoringCache tag containing the base Deno target.
-        required: false
-        type: string
-        default: deno-actions-target-r30339284716-a1-branch-deno-cache-followups-ubuntu-24-x86_64
-      seed_registry_tag:
-        description: Exact signed BoringCache tag containing the matching Cargo registry.
-        required: false
-        type: string
-        default: deno-actions-cargo-registry-r30339284716-a1-branch-deno-cache-followups-ubuntu-24-x86_64
   workflow_dispatch:
     inputs:
       cli_version:
@@ -44,16 +34,6 @@ on:
         required: false
         type: string
         default: "1"
-      seed_target_tag:
-        description: Exact signed BoringCache tag containing the base Deno target.
-        required: false
-        type: string
-        default: deno-actions-target-r30339284716-a1-branch-deno-cache-followups-ubuntu-24-x86_64
-      seed_registry_tag:
-        description: Exact signed BoringCache tag containing the matching Cargo registry.
-        required: false
-        type: string
-        default: deno-actions-cargo-registry-r30339284716-a1-branch-deno-cache-followups-ubuntu-24-x86_64
 
 permissions:
   actions: read
@@ -68,19 +48,9 @@ env:
 
 jobs:
   publish-base:
-    name: Publish base target (${{ matrix.transport }})
+    name: Publish one base target through both transports
     runs-on: ubuntu-24.04
     timeout-minutes: 180
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - transport: chunks
-            suffix: -chunks
-            graph_writes: "1"
-          - transport: monolith
-            suffix: -monolith
-            graph_writes: "0"
     steps:
       - name: Validate BoringCache secrets
         env:
@@ -134,105 +104,152 @@ jobs:
       - name: Configure Deno Linux build environment
         run: ./scripts/setup-deno-linux.sh
 
-      - name: Scope the Cargo product plan
+      - name: Install exact sccache
+        run: ./scripts/install-sccache.sh 0.16.0
+
+      - name: Require a clean product starting point
+        run: |
+          test ! -e upstream/target
+          cp .boringcache.toml /tmp/deno-boringcache-product-plan.toml
+
+      - name: Scope the monolith Cargo product plan
         run: |
           ./scripts/scope-boringcache-run.sh \
             "r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}" \
             "r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}" \
-            "${{ matrix.suffix }}" \
-            "${{ matrix.suffix }}"
+            "-monolith" \
+            "-monolith"
 
-      - name: Restore the exact signed base archives
-        env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
-        run: |
-          boringcache inspect "$BENCHMARK_WORKSPACE" "${{ inputs.seed_target_tag }}" --json \
-            | tee /tmp/deno-seed-target-inspect.json
-          jq -e '.entry.status == "ready" and .entry.server_signed and (.entry.storage_mode == "archive" or (.entry.storage_mode == "cas" and .entry.cas_layout == "archive-chunks-v1" and .entry.storage_verified))' \
-            /tmp/deno-seed-target-inspect.json
-          boringcache restore "$BENCHMARK_WORKSPACE" \
-            --entry "${{ inputs.seed_registry_tag }}:${HOME}/.cargo/registry" \
-            --entry "${{ inputs.seed_target_tag }}:${GITHUB_WORKSPACE}/upstream/target" \
-            --no-platform \
-            --no-git \
-            --fail-on-cache-miss \
-            --fail-on-cache-error
-
-      - name: Require the base target
-        run: |
-          test -x upstream/target/release/deno
-          test -s upstream/target/.mtime-cache-db.json
-
-      - name: Restore source times for the imported base target
-        run: node ./scripts/run-deno-mtime-cache.js ./upstream | tee /tmp/deno-imported-mtime.log
-
-      - name: Install exact sccache
-        run: ./scripts/install-sccache.sh 0.16.0
-
-      - name: Publish through boringcache cargo
-        id: publish
+      - name: Build and publish the monolith through boringcache cargo
+        id: publish-monolith
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-          BORINGCACHE_ARCHIVE_GRAPH_WRITES: ${{ matrix.graph_writes }}
+          BORINGCACHE_ARCHIVE_GRAPH_WRITES: "0"
           DENO_USE_BORINGCACHE_CARGO: "1"
           DENO_BORINGCACHE_CARGO_ACCESS: publish
-          DENO_BORINGCACHE_METADATA_PHASE: base-${{ matrix.transport }}
-          DENO_BORINGCACHE_NATIVE_EVIDENCE_DIR: /tmp/deno-base-native
-          DENO_CARGO_EVIDENCE_FILE: /tmp/deno-base-cargo.jsonl
+          DENO_BORINGCACHE_METADATA_PHASE: base-monolith
+          DENO_BORINGCACHE_NATIVE_EVIDENCE_DIR: /tmp/deno-base-native-monolith
+          DENO_CARGO_EVIDENCE_FILE: /tmp/deno-base-cargo-monolith.jsonl
         run: |
           set -euo pipefail
-          mkdir -p /tmp/deno-base-native
+          mkdir -p /tmp/deno-base-native-monolith
           started_at="$(date +%s)"
-          ./scripts/run-deno-build.sh 2>&1 | tee /tmp/deno-base-cli.log
+          ./scripts/run-deno-build.sh 2>&1 | tee /tmp/deno-base-cli-monolith.log
           elapsed="$(( $(date +%s) - started_at ))"
           echo "elapsed_seconds=${elapsed}" >> "$GITHUB_OUTPUT"
 
-      - name: Inspect published target
-        id: target
+      - name: Inspect the monolith publication
+        id: target-monolith
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
         run: |
-          target_tag_raw="deno-cargo-target-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}${{ matrix.suffix }}"
+          target_tag_raw="deno-cargo-target-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}-monolith"
           boringcache check "$BENCHMARK_WORKSPACE" "$target_tag_raw" --no-git --json \
-            | tee "/tmp/deno-base-check-${{ matrix.transport }}.json"
-          target_tag="$(jq -r '.results[] | select(.status == "hit") | .tag' "/tmp/deno-base-check-${{ matrix.transport }}.json")"
+            | tee /tmp/deno-base-check-monolith.json
+          target_tag="$(jq -r '.results[] | select(.status == "hit") | .tag' /tmp/deno-base-check-monolith.json)"
           [[ -n "$target_tag" ]] || { echo "Published target did not resolve" >&2; exit 1; }
           target_size="$(du -sb upstream/target | awk '{ print $1 }')"
           boringcache inspect "$BENCHMARK_WORKSPACE" "$target_tag" --json \
-            | tee "/tmp/deno-base-inspect-${{ matrix.transport }}.json"
-          if [[ "${{ matrix.transport }}" == "chunks" ]]; then
-            jq -e '.entry.storage_mode == "cas" and .entry.cas_layout == "archive-chunks-v1" and .entry.server_signed and .entry.storage_verified and .entry.blob_count > 1' \
-              "/tmp/deno-base-inspect-${{ matrix.transport }}.json"
-          else
-            jq -e '.entry.storage_mode == "archive" and .entry.cas_layout == null and .entry.server_signed' \
-              "/tmp/deno-base-inspect-${{ matrix.transport }}.json"
-          fi
+            | tee /tmp/deno-base-inspect-monolith.json
+          jq -e '.entry.storage_mode == "archive" and .entry.cas_layout == null and .entry.server_signed' \
+            /tmp/deno-base-inspect-monolith.json
           echo "tag=${target_tag}" >> "$GITHUB_OUTPUT"
           echo "target_size_bytes=${target_size}" >> "$GITHUB_OUTPUT"
 
-      - name: Write base evidence
+      - name: Write monolith base evidence
         run: |
-          evidence_dir="benchmark-results/evidence-base-${{ matrix.transport }}"
+          evidence_dir="benchmark-results/evidence-base-monolith"
           mkdir -p "$evidence_dir"
           jq -n \
             --arg schema_version deno_boringcache_cargo_base.v1 \
-            --arg transport "${{ matrix.transport }}" \
+            --arg transport monolith \
             --arg cli_version "${{ inputs.cli_version }}" \
-            --arg target_tag "${{ steps.target.outputs.tag }}" \
-            --argjson elapsed_seconds "${{ steps.publish.outputs.elapsed_seconds }}" \
-            --argjson target_size_bytes "${{ steps.target.outputs.target_size_bytes }}" \
-            --slurpfile inspection "/tmp/deno-base-inspect-${{ matrix.transport }}.json" \
+            --arg target_tag "${{ steps.target-monolith.outputs.tag }}" \
+            --argjson elapsed_seconds "${{ steps.publish-monolith.outputs.elapsed_seconds }}" \
+            --argjson target_size_bytes "${{ steps.target-monolith.outputs.target_size_bytes }}" \
+            --slurpfile inspection /tmp/deno-base-inspect-monolith.json \
             '{schema_version: $schema_version, transport: $transport, cli_version: $cli_version, target_tag: $target_tag, elapsed_seconds: $elapsed_seconds, target_size_bytes: $target_size_bytes, archive: $inspection[0].entry}' \
-            > "benchmark-results/base-${{ matrix.transport }}.json"
-          cp /tmp/deno-base-cli.log "$evidence_dir/cli.log"
-          cp /tmp/deno-base-cargo.jsonl "$evidence_dir/cargo.jsonl"
-          cp /tmp/deno-base-native/*.json "$evidence_dir/"
+            > benchmark-results/base-monolith.json
+          cp /tmp/deno-base-cli-monolith.log "$evidence_dir/cli.log"
+          cp /tmp/deno-base-cargo-monolith.jsonl "$evidence_dir/cargo.jsonl"
+          cp /tmp/deno-base-native-monolith/*.json "$evidence_dir/"
+
+      - name: Scope the chunk Cargo product plan
+        run: |
+          cp /tmp/deno-boringcache-product-plan.toml .boringcache.toml
+          ./scripts/scope-boringcache-run.sh \
+            "r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}" \
+            "r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}" \
+            "-chunks" \
+            "-chunks"
+
+      - name: Reuse and publish the same target as chunks through boringcache cargo
+        id: publish-chunks
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
+          BORINGCACHE_ARCHIVE_GRAPH_WRITES: "1"
+          DENO_USE_BORINGCACHE_CARGO: "1"
+          DENO_BORINGCACHE_CARGO_ACCESS: publish
+          DENO_BORINGCACHE_METADATA_PHASE: base-chunks
+          DENO_BORINGCACHE_NATIVE_EVIDENCE_DIR: /tmp/deno-base-native-chunks
+          DENO_CARGO_EVIDENCE_FILE: /tmp/deno-base-cargo-chunks.jsonl
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/deno-base-native-chunks
+          started_at="$(date +%s)"
+          ./scripts/run-deno-build.sh 2>&1 | tee /tmp/deno-base-cli-chunks.log
+          elapsed="$(( $(date +%s) - started_at ))"
+          echo "elapsed_seconds=${elapsed}" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect the chunk publication
+        id: target-chunks
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+        run: |
+          target_tag_raw="deno-cargo-target-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}-chunks"
+          boringcache check "$BENCHMARK_WORKSPACE" "$target_tag_raw" --no-git --json \
+            | tee /tmp/deno-base-check-chunks.json
+          target_tag="$(jq -r '.results[] | select(.status == "hit") | .tag' /tmp/deno-base-check-chunks.json)"
+          [[ -n "$target_tag" ]] || { echo "Published target did not resolve" >&2; exit 1; }
+          target_size="$(du -sb upstream/target | awk '{ print $1 }')"
+          boringcache inspect "$BENCHMARK_WORKSPACE" "$target_tag" --json \
+            | tee /tmp/deno-base-inspect-chunks.json
+          jq -e '.entry.storage_mode == "cas" and .entry.cas_layout == "archive-chunks-v1" and .entry.server_signed and .entry.storage_verified and .entry.blob_count > 1' \
+            /tmp/deno-base-inspect-chunks.json
+          echo "tag=${target_tag}" >> "$GITHUB_OUTPUT"
+          echo "target_size_bytes=${target_size}" >> "$GITHUB_OUTPUT"
+
+      - name: Prove both transports captured one local target cohort
+        run: |
+          test -x upstream/target/release/deno
+          test -s upstream/target/.boringcache/cargo-freshness-v2.json
+          [[ "${{ steps.target-monolith.outputs.target_size_bytes }}" == \
+            "${{ steps.target-chunks.outputs.target_size_bytes }}" ]]
+
+      - name: Write chunk base evidence
+        run: |
+          evidence_dir="benchmark-results/evidence-base-chunks"
+          mkdir -p "$evidence_dir"
+          jq -n \
+            --arg schema_version deno_boringcache_cargo_base.v1 \
+            --arg transport chunks \
+            --arg cli_version "${{ inputs.cli_version }}" \
+            --arg target_tag "${{ steps.target-chunks.outputs.tag }}" \
+            --argjson elapsed_seconds "${{ steps.publish-chunks.outputs.elapsed_seconds }}" \
+            --argjson target_size_bytes "${{ steps.target-chunks.outputs.target_size_bytes }}" \
+            --slurpfile inspection /tmp/deno-base-inspect-chunks.json \
+            '{schema_version: $schema_version, transport: $transport, cli_version: $cli_version, target_tag: $target_tag, elapsed_seconds: $elapsed_seconds, target_size_bytes: $target_size_bytes, archive: $inspection[0].entry}' \
+            > benchmark-results/base-chunks.json
+          cp /tmp/deno-base-cli-chunks.log "$evidence_dir/cli.log"
+          cp /tmp/deno-base-cargo-chunks.jsonl "$evidence_dir/cargo.jsonl"
+          cp /tmp/deno-base-native-chunks/*.json "$evidence_dir/"
 
       - name: Upload base evidence
         uses: actions/upload-artifact@v6
         with:
-          name: deno-cargo-base-${{ matrix.transport }}
+          name: deno-cargo-base-transports
           path: benchmark-results
           if-no-files-found: error
 
