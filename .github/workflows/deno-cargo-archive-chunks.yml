@@ -114,10 +114,19 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - name: Install pinned Rust toolchain and exact CLI with BoringCache
+        uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e # v1.15.0
         with:
-          toolchain: ${{ steps.source.outputs.DENO_RUST_VERSION }}
+          cli-version: ${{ inputs.cli_version }}
+          trust-policy: restore
+          setup: mise
+          tools: rust@${{ steps.source.outputs.DENO_RUST_VERSION }}
+          mode: archive
+          cache-profiles: rust-toolchain
+          working-directory: .
+          verify: none
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
 
       - name: Free runner disk space
         run: ./scripts/free-runner-disk.sh
@@ -133,16 +142,13 @@ jobs:
             "${{ matrix.suffix }}" \
             "${{ matrix.suffix }}"
 
-      - name: Install exact CLI canary
-        run: ./scripts/install-boringcache-canary.sh "${{ inputs.cli_version }}"
-
       - name: Restore the exact signed base archives
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
         run: |
           boringcache inspect "$BENCHMARK_WORKSPACE" "${{ inputs.seed_target_tag }}" --json \
             | tee /tmp/deno-seed-target-inspect.json
-          jq -e '.entry.status == "ready" and .entry.storage_mode == "archive" and .entry.server_signed' \
+          jq -e '.entry.status == "ready" and .entry.server_signed and (.entry.storage_mode == "archive" or (.entry.storage_mode == "cas" and .entry.cas_layout == "archive-chunks-v1" and .entry.storage_verified))' \
             /tmp/deno-seed-target-inspect.json
           boringcache restore "$BENCHMARK_WORKSPACE" \
             --entry "${{ inputs.seed_registry_tag }}:${HOME}/.cargo/registry" \
@@ -276,10 +282,19 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - name: Install pinned Rust toolchain and exact CLI with BoringCache
+        uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e # v1.15.0
         with:
-          toolchain: ${{ steps.source.outputs.DENO_RUST_VERSION }}
+          cli-version: ${{ inputs.cli_version }}
+          trust-policy: restore
+          setup: mise
+          tools: rust@${{ steps.source.outputs.DENO_RUST_VERSION }}
+          mode: archive
+          cache-profiles: rust-toolchain
+          working-directory: .
+          verify: none
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
 
       - name: Free runner disk space
         run: ./scripts/free-runner-disk.sh
@@ -294,9 +309,6 @@ jobs:
             "r${SOURCE_RUN_ID}-a${SOURCE_RUN_ATTEMPT}" \
             "${{ matrix.suffix }}" \
             ""
-
-      - name: Install exact CLI canary
-        run: ./scripts/install-boringcache-canary.sh "${{ inputs.cli_version }}"
 
       - name: Install exact sccache
         run: ./scripts/install-sccache.sh 0.16.0

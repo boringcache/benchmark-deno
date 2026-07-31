@@ -48,7 +48,14 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
         self.assertIn("Restore the exact signed base archives", workflow)
         self.assertIn('storage_mode == "archive"', workflow)
         self.assertNotIn("uses: actions/cache/restore@", workflow)
-        self.assertNotIn("uses: boringcache/one@", workflow)
+        self.assertIn(
+            "uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e",
+            workflow,
+        )
+        self.assertEqual(workflow.count("uses: boringcache/one@"), 2)
+        self.assertIn("cache-profiles: rust-toolchain", workflow)
+        self.assertIn("setup: mise", workflow)
+        self.assertNotIn("uses: dtolnay/rust-toolchain@", workflow)
         dispatcher = (ROOT / ".github/workflows/deno-rust-cache-proof.yml").read_text()
         self.assertIn("- cargo-archive-chunks", dispatcher)
         self.assertIn(
@@ -60,13 +67,30 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
             ROOT / ".github/workflows/deno-cargo-archive-chunks.yml"
         ).read_text()
 
-        self.assertIn("install-boringcache-canary.sh", workflow)
+        self.assertIn("cli-version: ${{ inputs.cli_version }}", workflow)
         self.assertIn("install-sccache.sh 0.16.0", workflow)
         self.assertIn("verify_boringcache_cargo.py", workflow)
         self.assertIn("Require the existing sccache seed", workflow)
         self.assertIn('.kv_entry_count > 0', workflow)
         self.assertIn('test ! -e upstream/target', workflow)
         self.assertIn('test -x upstream/target/release/deno', workflow)
+
+    def test_rust_toolchain_archive_matches_the_pinned_source_version(self):
+        source = dict(
+            line.split("=", 1)
+            for line in (ROOT / "benchmark-source.env").read_text().splitlines()
+            if line
+        )
+        config = (ROOT / ".boringcache.toml").read_text()
+        version = source["DENO_RUST_VERSION"]
+
+        self.assertIn(
+            f'tag = "deno-rust-toolchain-{version.replace(".", "-")}"', config
+        )
+        self.assertIn(
+            f'path = "~/.local/share/mise/installs/rust/{version}"', config
+        )
+        self.assertIn('[profiles.rust-toolchain]\nentries = ["rust-toolchain"]', config)
 
 
 class BoringCacheCargoEvidenceTest(unittest.TestCase):
