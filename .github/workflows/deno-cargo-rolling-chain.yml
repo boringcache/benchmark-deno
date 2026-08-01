@@ -1,0 +1,244 @@
+name: "Deno Cargo rolling chain"
+run-name: Deno Cargo rolling ${{ inputs.base_sha }} to ${{ inputs.head_sha }}
+
+on:
+  workflow_call:
+    inputs:
+      cli_version:
+        description: Exact immutable BoringCache CLI release tag.
+        required: true
+        type: string
+      cache_scope:
+        description: Existing rolling scope whose target was published from base_sha.
+        required: true
+        type: string
+      base_sha:
+        description: Source commit currently represented by the published target.
+        required: true
+        type: string
+      head_sha:
+        description: Immediate child commit to build and publish as the next seed.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      cli_version:
+        description: Exact immutable BoringCache CLI release tag.
+        required: true
+        type: string
+        default: v1.16.3
+      cache_scope:
+        description: Existing rolling scope whose target was published from base_sha.
+        required: true
+        type: string
+      base_sha:
+        description: Source commit currently represented by the published target.
+        required: true
+        type: string
+      head_sha:
+        description: Immediate child commit to build and publish as the next seed.
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  BENCHMARK_WORKSPACE: boringcache/benchmark-deno
+  DENO_BENCHMARK_PROFILE: release
+
+jobs:
+  advance:
+    name: Restore published base and promote adjacent head
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Validate BoringCache secrets
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
+        run: |
+          [[ -n "$BORINGCACHE_RESTORE_TOKEN" ]] || { echo "Missing BoringCache restore token" >&2; exit 1; }
+          [[ -n "$BORINGCACHE_SAVE_TOKEN" ]] || { echo "Missing BoringCache save token" >&2; exit 1; }
+
+      - name: Checkout benchmark repository
+        uses: actions/checkout@v6
+
+      - name: Read pinned toolchain
+        id: source
+        run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
+
+      - name: Checkout adjacent Deno head
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
+          ref: ${{ inputs.head_sha }}
+          path: upstream
+          fetch-depth: 2
+          submodules: false
+
+      - name: Require one-commit source cadence
+        run: |
+          set -euo pipefail
+          test "$(git -C upstream rev-parse HEAD)" = "${{ inputs.head_sha }}"
+          test "$(git -C upstream rev-parse HEAD^)" = "${{ inputs.base_sha }}"
+          git -C upstream clean -fdx
+          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
+
+      - name: Install Deno snapshot minifier runtime
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
+        with:
+          deno-version: v2.x
+
+      - name: Install the exact released BoringCache CLI
+        run: ./scripts/install-boringcache-cli.sh "${{ inputs.cli_version }}" linux-amd64
+
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install "${{ steps.source.outputs.DENO_RUST_VERSION }}" --profile minimal
+          rustup default "${{ steps.source.outputs.DENO_RUST_VERSION }}"
+
+      - name: Free runner disk space
+        run: ./scripts/free-runner-disk.sh
+
+      - name: Configure Deno Linux build environment
+        run: ./scripts/setup-deno-linux.sh
+
+      - name: Install exact sccache
+        run: ./scripts/install-sccache.sh 0.16.0
+
+      - name: Scope the persistent Cargo product chain
+        run: |
+          ./scripts/scope-boringcache-run.sh \
+            "${{ inputs.cache_scope }}" \
+            "${{ inputs.cache_scope }}" \
+            "" \
+            ""
+
+      - name: Require the published base target and sccache seed
+        id: base
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+        run: |
+          set -euo pipefail
+          test ! -e upstream/target
+          target_tag_raw="deno-cargo-target-${{ inputs.cache_scope }}"
+          boringcache check "$BENCHMARK_WORKSPACE" "$target_tag_raw" --no-git --json \
+            | tee /tmp/deno-chain-base-check.json
+          target_tag="$(jq -r '.results[] | select(.status == "hit") | .tag' /tmp/deno-chain-base-check.json)"
+          [[ -n "$target_tag" ]] || { echo "Published base target did not resolve" >&2; exit 1; }
+          boringcache inspect "$BENCHMARK_WORKSPACE" "$target_tag" --json \
+            | tee /tmp/deno-chain-base-inspect.json
+          jq -e '.entry.status == "ready" and .entry.server_signed and (.entry.storage_mode == "archive" or (.entry.storage_mode == "cas" and .entry.storage_verified))' \
+            /tmp/deno-chain-base-inspect.json
+          echo "entry_id=$(jq -r '.entry.id' /tmp/deno-chain-base-inspect.json)" >> "$GITHUB_OUTPUT"
+
+          sccache_tag="deno-rust-cache-${{ inputs.cache_scope }}"
+          boringcache check "$BENCHMARK_WORKSPACE" "$sccache_tag" --no-git --json \
+            | tee /tmp/deno-chain-sccache-check.json
+          jq -e '.results[] | select(.status == "hit" and .kv_entry_count > 0)' \
+            /tmp/deno-chain-sccache-check.json
+
+      - name: Restore, build, and publish the adjacent head through boringcache cargo
+        id: build
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
+          DENO_USE_BORINGCACHE_CARGO: "1"
+          DENO_BORINGCACHE_CARGO_ACCESS: publish
+          DENO_BORINGCACHE_METADATA_PHASE: rolling-chain
+          DENO_BORINGCACHE_NATIVE_EVIDENCE_DIR: /tmp/deno-chain-native
+          DENO_CARGO_EVIDENCE_FILE: /tmp/deno-chain-cargo.jsonl
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/deno-chain-native
+          started_at="$(date +%s)"
+          if ! ./scripts/run-deno-build.sh \
+            > /tmp/deno-chain-cargo-console.log \
+            2> /tmp/deno-chain-cli.log; then
+            cat /tmp/deno-chain-cargo-console.log
+            cat /tmp/deno-chain-cli.log >&2
+            exit 1
+          fi
+          cat /tmp/deno-chain-cargo-console.log
+          cat /tmp/deno-chain-cli.log >&2
+          echo "elapsed_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Cargo correctness, cache health, and head promotion
+        id: proof
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -x upstream/target/release/deno
+          test -s upstream/target/.boringcache/cargo-freshness-v2.json
+          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
+
+          target_tag_raw="deno-cargo-target-${{ inputs.cache_scope }}"
+          boringcache check "$BENCHMARK_WORKSPACE" "$target_tag_raw" --no-git --json \
+            | tee /tmp/deno-chain-head-check.json
+          target_tag="$(jq -r '.results[] | select(.status == "hit") | .tag' /tmp/deno-chain-head-check.json)"
+          boringcache inspect "$BENCHMARK_WORKSPACE" "$target_tag" --json \
+            | tee /tmp/deno-chain-head-inspect.json
+          jq -e '.entry.status == "ready" and .entry.server_signed and (.entry.storage_mode == "archive" or (.entry.storage_mode == "cas" and .entry.storage_verified))' \
+            /tmp/deno-chain-head-inspect.json
+          test "$(jq -r '.entry.id' /tmp/deno-chain-head-inspect.json)" != "${{ steps.base.outputs.entry_id }}"
+
+          unchanged="$(sed -nE 's/.*restored: ([0-9,]+) unchanged, ([0-9,]+) changed\/new;.*/\1/p' /tmp/deno-chain-cli.log | tail -n 1 | tr -d ',')"
+          changed="$(sed -nE 's/.*restored: ([0-9,]+) unchanged, ([0-9,]+) changed\/new;.*/\2/p' /tmp/deno-chain-cli.log | tail -n 1 | tr -d ',')"
+          fresh="$(jq -s '[.[] | select(.reason == "compiler-artifact" and .fresh == true)] | length' /tmp/deno-chain-cargo.jsonl)"
+          rebuilt="$(jq -s '[.[] | select(.reason == "compiler-artifact" and .fresh == false)] | length' /tmp/deno-chain-cargo.jsonl)"
+
+          mapfile -t native_evidence < <(find /tmp/deno-chain-native -type f -name '*.json' | sort)
+          [[ "${#native_evidence[@]}" -gt 0 ]]
+          jq -se --argjson rebuilt "$rebuilt" '
+            all(.tool == "sccache") and
+            (map(.cache_read_errors // 0) | add) == 0 and
+            (map(.cache_write_errors // 0) | add) == 0 and
+            (map(.cache_timeouts // 0) | add) == 0 and
+            (
+              $rebuilt == 0 or
+              (
+                (map(.compile_requests // 0) | add) > 0 and
+                (map((.cache_hits // 0) + (.cache_misses // 0)) | add) > 0
+              )
+            )
+          ' "${native_evidence[@]}"
+
+          # An adjacent docs or type-only commit may correctly rebuild nothing.
+          # The changed source identity and new signed entry prove promotion.
+          [[ "${unchanged:-0}" -gt 0 ]]
+          [[ "${changed:-0}" -gt 0 ]]
+          [[ "$fresh" -gt 0 ]]
+          {
+            echo "unchanged=${unchanged}"
+            echo "changed=${changed}"
+            echo "fresh=${fresh}"
+            echo "rebuilt=${rebuilt}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish rolling cadence summary
+        run: |
+          {
+            echo "## Deno Cargo rolling cadence"
+            echo
+            echo "- CLI: \`${{ inputs.cli_version }}\`"
+            echo "- Source: \`${{ inputs.base_sha }}\` → \`${{ inputs.head_sha }}\`"
+            echo "- End to end: ${{ steps.build.outputs.elapsed_seconds }}s"
+            echo "- Source freshness: ${{ steps.proof.outputs.unchanged }} unchanged, ${{ steps.proof.outputs.changed }} changed/new"
+            echo "- Cargo artifacts: ${{ steps.proof.outputs.fresh }} fresh, ${{ steps.proof.outputs.rebuilt }} rebuilt"
+            echo "- The authenticated target selected by the released CLI was advanced in place and is the next rolling seed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload rolling evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: deno-cargo-rolling-${{ inputs.head_sha }}
+          path: |
+            /tmp/deno-chain-*.json
+            /tmp/deno-chain-*.jsonl
+            /tmp/deno-chain-*.log
+            /tmp/deno-chain-native/*.json
+          if-no-files-found: error

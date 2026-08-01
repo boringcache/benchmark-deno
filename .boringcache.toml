@@ -8,6 +8,14 @@ workspace = "boringcache/benchmark-deno"
 [entries.cargo-registry]
 tag = "deno-cargo-registry-local"
 
+[entries.cargo-git]
+tag = "deno-cargo-git-local"
+
+[entries.cargo-target]
+kind = "cargo-target"
+tag = "deno-cargo-target-local"
+path = "upstream/target"
+
 [entries.release-lto]
 tag = "deno-release-lto-cache-local"
 path = "upstream/target/release/lto-cache"
@@ -29,6 +37,9 @@ path = "upstream/target"
 
 [profiles.cargo]
 entries = ["cargo-registry"]
+
+[profiles.cargo-product]
+entries = ["cargo-registry", "cargo-git", "cargo-target"]
 
 [profiles.release-hybrid]
 entries = ["cargo-registry", "release-lto"]
@@ -53,3 +64,9 @@ entries = []
 tag = "deno-rust-cache-local"
 command = ["./scripts/run-deno-build.sh"]
 no-git = true
+
+[adapters.cargo]
+tag = "deno-rust-cache-local"
+profiles = ["cargo-product"]
+no-git = true
+metadata-hints = ["benchmark=deno", "lane=cargo-product"]

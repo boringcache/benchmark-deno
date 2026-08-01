@@ -12,7 +12,7 @@ BoringCache candidates:
 - a same-seed cohort that combines persistent `target/` with sccache on both
   sides and changes only archived-local versus eagerly warmed remote storage
 
-Stable proof runs pin `boringcache/one` `v1.15.0` by immutable commit and keep
+Stable proof runs pin `boringcache/one` `v1.16.3` by immutable commit and keep
 Rust installation in the host workflow. Canary runs require an exact immutable
 CLI tag.
 
@@ -128,6 +128,21 @@ sccache. The report refuses to compare different runner image releases, CPU
 models, core counts, memory classes, or compiler environments, and includes
 exact target freshness plus native hit/miss counts.
 
+The **Deno Cargo product proof** runs the pinned base and adjacent head through
+the exact released `boringcache cargo` command. The CLI owns target transport,
+source freshness, Cargo registry and Git state, and sccache. The benchmark owns
+only the adjacent source pair, Deno build preparation, wall time, and independent
+evidence.
+
+The base starts without `target/` and publishes through the normal read/write
+Cargo lifecycle. A fresh head runner restores through the same plan in
+read-only mode. The proof accepts the authenticated archive transport selected
+by the released CLI; archive-layout rollout experiments are separate. It
+verifies the executable target, exact unchanged-source mtimes, changed sources
+newer than restored artifacts, Cargo's fresh/rebuilt artifact messages, and
+native sccache counters. It does not run Deno's mtime Action or manually call
+`boringcache save` or `boringcache restore` for Cargo state.
+
 ## Run it
 
 The repository needs these Actions secrets:
@@ -136,11 +151,11 @@ The repository needs these Actions secrets:
 - `BORINGCACHE_SAVE_TOKEN`
 
 Run **Deno release hybrid cache proof**, **Deno Linux debug cache proof**,
-either full-target proof, or **Deno release sccache plus target cohort** from
-the Actions tab. The optional `cli_version` input can pin a canary CLI release.
-Full-target proofs also require the completed source proof run ID whose seed
-and Actions result should be reused. Each proof publishes one comparison table
-and JSON artifact.
+either full-target proof, **Deno release sccache plus target cohort**, or
+**Deno Cargo product proof** from the Actions tab. The `cli_version` input pins
+an exact released CLI. Full-target proofs also
+require the completed source proof run ID whose seed and Actions result should
+be reused. Each proof publishes one comparison table and JSON artifact.
 
 The target identity control additionally takes the completed full-target run
 that owns the promoted archive and the source run that owns the paired Actions
