@@ -16,12 +16,6 @@ kind = "cargo-target"
 tag = "deno-cargo-target-local"
 path = "upstream/target"
 
-# boringcache/one restores this profile before mise installs the exact version.
-# Keep the tag and path aligned with DENO_RUST_VERSION in benchmark-source.env.
-[entries.rust-toolchain]
-tag = "deno-rust-toolchain-1-95-0"
-path = "~/.local/share/mise/installs/rust/1.95.0"
-
 [entries.release-lto]
 tag = "deno-release-lto-cache-local"
 path = "upstream/target/release/lto-cache"
@@ -46,9 +40,6 @@ entries = ["cargo-registry"]
 
 [profiles.cargo-product]
 entries = ["cargo-registry", "cargo-git", "cargo-target"]
-
-[profiles.rust-toolchain]
-entries = ["rust-toolchain"]
 
 [profiles.release-hybrid]
 entries = ["cargo-registry", "release-lto"]

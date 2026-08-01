@@ -5,10 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       cli_version:
-        description: Optional BoringCache CLI release tag for a canary run.
+        description: Exact BoringCache CLI release tag.
         required: false
         type: string
-        default: ""
+        default: "v1.16.3"
       experiment:
         description: Cache experiment to run.
         required: true
@@ -20,7 +20,7 @@ on:
           - release-sccache
           - release-full-target
           - debug-full-target
-          - cargo-archive-chunks
+          - cargo-product
           - cargo-rolling-chain
       cache_scope:
         description: Existing Cargo rolling scope; required by cargo-rolling-chain.
@@ -45,17 +45,17 @@ permissions:
 jobs:
   actions-cache:
     name: Actions cache baseline
-    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-archive-chunks' && inputs.experiment != 'cargo-rolling-chain' }}
+    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-product' && inputs.experiment != 'cargo-rolling-chain' }}
     uses: ./.github/workflows/deno-actions-cache.yml
     with:
       benchmark_id: ${{ inputs.experiment == 'debug' && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
       build_profile: ${{ inputs.experiment == 'debug' && 'debug' || 'release' }}
-      cli_version: ${{ inputs.cli_version || 'v1.16.2' }}
+      cli_version: ${{ inputs.cli_version }}
     secrets: inherit
 
   boringcache:
     name: BoringCache candidate
-    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-archive-chunks' && inputs.experiment != 'cargo-rolling-chain' }}
+    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-product' && inputs.experiment != 'cargo-rolling-chain' }}
     uses: ./.github/workflows/deno-boringcache.yml
     with:
       benchmark_id: ${{ inputs.experiment == 'debug' && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
@@ -79,10 +79,10 @@ jobs:
       cli_version: ${{ inputs.cli_version }}
     secrets: inherit
 
-  cargo-archive-chunks:
-    name: BoringCache Cargo chunks vs monolith
-    if: ${{ inputs.experiment == 'cargo-archive-chunks' }}
-    uses: ./.github/workflows/deno-cargo-archive-chunks.yml
+  cargo-product:
+    name: BoringCache Cargo product proof
+    if: ${{ inputs.experiment == 'cargo-product' }}
+    uses: ./.github/workflows/deno-cargo-product.yml
     with:
       cli_version: ${{ inputs.cli_version }}
     secrets: inherit
@@ -100,7 +100,7 @@ jobs:
 
   compare:
     name: Compare results
-    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-archive-chunks' && inputs.experiment != 'cargo-rolling-chain' }}
+    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-product' && inputs.experiment != 'cargo-rolling-chain' }}
     needs: [actions-cache, boringcache]
     runs-on: ubuntu-24.04
     env:

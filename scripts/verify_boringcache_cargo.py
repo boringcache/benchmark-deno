@@ -26,7 +26,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cargo-messages", required=True)
     parser.add_argument("--native-evidence-dir", required=True)
     parser.add_argument("--inspect-json", required=True)
-    parser.add_argument("--transport", choices=("chunks", "monolith"), required=True)
     parser.add_argument("--elapsed-seconds", type=int, required=True)
     parser.add_argument("--target-size-bytes", type=int, required=True)
     parser.add_argument("--cli-version", required=True)
@@ -186,9 +185,7 @@ def verify_sccache(directory: Path) -> dict[str, int | float]:
     # product-health boundary; keep the generic counter in evidence instead of
     # misclassifying it or hiding it.
     if totals["cache_read_errors"] or totals["cache_timeouts"]:
-        raise ValueError(
-            "The rolling build reported sccache read errors or timeouts"
-        )
+        raise ValueError("The rolling build reported sccache read errors or timeouts")
     return {
         **totals,
         "hit_rate": round(totals["cache_hits"] * 100 / attempts, 2)
@@ -197,27 +194,24 @@ def verify_sccache(directory: Path) -> dict[str, int | float]:
     }
 
 
-def verify_archive(path: Path, transport: str) -> dict[str, Any]:
+def verify_archive(path: Path) -> dict[str, Any]:
     inspection = json.loads(path.read_text())
     entry = inspection["entry"]
     if entry.get("status") != "ready":
         raise ValueError("Target cache is not ready")
     if not entry.get("server_signed"):
         raise ValueError("Target cache root is not server signed")
-    if transport == "chunks":
-        if entry.get("storage_mode") != "cas":
-            raise ValueError("Chunked target is not stored on CAS")
-        if entry.get("cas_layout") != "archive-chunks-v1":
-            raise ValueError("Chunked target has the wrong CAS layout")
-        if not entry.get("storage_verified"):
-            raise ValueError("Chunked target storage is not verified")
-        if int(entry.get("blob_count") or 0) < 2:
-            raise ValueError("Chunked target did not produce multiple blobs")
-    else:
-        if entry.get("storage_mode") != "archive":
-            raise ValueError("Monolithic control did not use archive storage")
+    storage_mode = entry.get("storage_mode")
+    if storage_mode == "archive":
         if entry.get("cas_layout") is not None:
-            raise ValueError("Monolithic control unexpectedly has a CAS layout")
+            raise ValueError("Archive target unexpectedly has a CAS layout")
+    elif storage_mode == "cas":
+        if not entry.get("cas_layout"):
+            raise ValueError("CAS target has no declared layout")
+        if not entry.get("storage_verified"):
+            raise ValueError("CAS target storage is not verified")
+    else:
+        raise ValueError(f"Unsupported target storage mode: {storage_mode!r}")
     return {
         "storage_mode": entry.get("storage_mode"),
         "cas_layout": entry.get("cas_layout"),
@@ -235,11 +229,11 @@ def main() -> int:
     target_root = Path(args.target_root).resolve()
     payload = {
         "schema_version": "deno_boringcache_cargo.v1",
-        "transport": args.transport,
+        "transport": "product-selected",
         "cli_version": args.cli_version,
         "elapsed_seconds": args.elapsed_seconds,
         "target_size_bytes": args.target_size_bytes,
-        "archive": verify_archive(Path(args.inspect_json), args.transport),
+        "archive": verify_archive(Path(args.inspect_json)),
         "freshness": verify_source_freshness(
             source_root, target_root, Path(args.cli_log)
         ),

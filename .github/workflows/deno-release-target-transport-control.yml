@@ -16,7 +16,7 @@ on:
       cli_version:
         description: Released BoringCache CLI version.
         required: true
-        default: v1.16.2
+        default: v1.16.3
         type: string
       run_build:
         description: Run the expensive Deno rolling build after target identity passes.
@@ -37,7 +37,7 @@ env:
   BENCHMARK_ID: deno-release-rust-cache
   BENCHMARK_WORKSPACE: boringcache/benchmark-deno
   DENO_BENCHMARK_PROFILE: release
-  RELEASE_ACTION_SHA: 95fa333f602bbcf131274118e6f025650912fba0
+  RELEASE_ACTION_SHA: b1d1e466317cde2d78a86f8cb94347deebb501e9
 
 jobs:
   promote-actions-target:
@@ -210,7 +210,7 @@ jobs:
 
       - name: Restore the canonical BoringCache sccache and selected target transport
         id: cache
-        uses: boringcache/one@95fa333f602bbcf131274118e6f025650912fba0 # v1.16.2
+        uses: boringcache/one@b1d1e466317cde2d78a86f8cb94347deebb501e9 # v1.16.3
         with:
           setup: none
           cli-version: ${{ inputs.cli_version }}

@@ -5,7 +5,7 @@ on:
   workflow_call:
     inputs:
       cli_version:
-        description: Immutable BoringCache CLI canary tag.
+        description: Exact immutable BoringCache CLI release tag.
         required: true
         type: string
       cache_scope:
@@ -23,9 +23,10 @@ on:
   workflow_dispatch:
     inputs:
       cli_version:
-        description: Immutable BoringCache CLI canary tag.
+        description: Exact immutable BoringCache CLI release tag.
         required: true
         type: string
+        default: v1.16.3
       cache_scope:
         description: Existing rolling scope whose target was published from base_sha.
         required: true
@@ -90,19 +91,13 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Install pinned Rust toolchain and exact CLI with BoringCache
-        uses: boringcache/one@95fa333f602bbcf131274118e6f025650912fba0 # v1.16.2
-        with:
-          cli-version: ${{ inputs.cli_version }}
-          trust-policy: restore
-          setup: mise
-          tools: rust@${{ steps.source.outputs.DENO_RUST_VERSION }}
-          mode: archive
-          cache-profiles: rust-toolchain
-          working-directory: .
-          verify: none
-        env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+      - name: Install the exact released BoringCache CLI
+        run: ./scripts/install-boringcache-cli.sh "${{ inputs.cli_version }}" linux-amd64
+
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install "${{ steps.source.outputs.DENO_RUST_VERSION }}" --profile minimal
+          rustup default "${{ steps.source.outputs.DENO_RUST_VERSION }}"
 
       - name: Free runner disk space
         run: ./scripts/free-runner-disk.sh
@@ -118,7 +113,7 @@ jobs:
           ./scripts/scope-boringcache-run.sh \
             "${{ inputs.cache_scope }}" \
             "${{ inputs.cache_scope }}" \
-            "-chunks" \
+            "" \
             ""
 
       - name: Require the published base target and sccache seed
@@ -128,14 +123,14 @@ jobs:
         run: |
           set -euo pipefail
           test ! -e upstream/target
-          target_tag_raw="deno-cargo-target-${{ inputs.cache_scope }}-chunks"
+          target_tag_raw="deno-cargo-target-${{ inputs.cache_scope }}"
           boringcache check "$BENCHMARK_WORKSPACE" "$target_tag_raw" --no-git --json \
             | tee /tmp/deno-chain-base-check.json
           target_tag="$(jq -r '.results[] | select(.status == "hit") | .tag' /tmp/deno-chain-base-check.json)"
           [[ -n "$target_tag" ]] || { echo "Published base target did not resolve" >&2; exit 1; }
           boringcache inspect "$BENCHMARK_WORKSPACE" "$target_tag" --json \
             | tee /tmp/deno-chain-base-inspect.json
-          jq -e '.entry.storage_mode == "cas" and .entry.cas_layout == "archive-chunks-v1" and .entry.server_signed and .entry.storage_verified and .entry.blob_count > 1' \
+          jq -e '.entry.status == "ready" and .entry.server_signed and (.entry.storage_mode == "archive" or (.entry.storage_mode == "cas" and .entry.storage_verified))' \
             /tmp/deno-chain-base-inspect.json
           echo "entry_id=$(jq -r '.entry.id' /tmp/deno-chain-base-inspect.json)" >> "$GITHUB_OUTPUT"
 
@@ -150,7 +145,6 @@ jobs:
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-          BORINGCACHE_ARCHIVE_GRAPH_WRITES: "1"
           DENO_USE_BORINGCACHE_CARGO: "1"
           DENO_BORINGCACHE_CARGO_ACCESS: publish
           DENO_BORINGCACHE_METADATA_PHASE: rolling-chain
@@ -181,13 +175,13 @@ jobs:
           test -s upstream/target/.boringcache/cargo-freshness-v2.json
           test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
 
-          target_tag_raw="deno-cargo-target-${{ inputs.cache_scope }}-chunks"
+          target_tag_raw="deno-cargo-target-${{ inputs.cache_scope }}"
           boringcache check "$BENCHMARK_WORKSPACE" "$target_tag_raw" --no-git --json \
             | tee /tmp/deno-chain-head-check.json
           target_tag="$(jq -r '.results[] | select(.status == "hit") | .tag' /tmp/deno-chain-head-check.json)"
           boringcache inspect "$BENCHMARK_WORKSPACE" "$target_tag" --json \
             | tee /tmp/deno-chain-head-inspect.json
-          jq -e '.entry.storage_mode == "cas" and .entry.cas_layout == "archive-chunks-v1" and .entry.server_signed and .entry.storage_verified and .entry.blob_count > 1' \
+          jq -e '.entry.status == "ready" and .entry.server_signed and (.entry.storage_mode == "archive" or (.entry.storage_mode == "cas" and .entry.storage_verified))' \
             /tmp/deno-chain-head-inspect.json
           test "$(jq -r '.entry.id' /tmp/deno-chain-head-inspect.json)" != "${{ steps.base.outputs.entry_id }}"
 
@@ -200,7 +194,6 @@ jobs:
           [[ "${#native_evidence[@]}" -gt 0 ]]
           jq -se --argjson rebuilt "$rebuilt" '
             all(.tool == "sccache") and
-            (map(.cache_errors // 0) | add) == 0 and
             (map(.cache_read_errors // 0) | add) == 0 and
             (map(.cache_write_errors // 0) | add) == 0 and
             (map(.cache_timeouts // 0) | add) == 0 and
@@ -235,7 +228,7 @@ jobs:
             echo "- End to end: ${{ steps.build.outputs.elapsed_seconds }}s"
             echo "- Source freshness: ${{ steps.proof.outputs.unchanged }} unchanged, ${{ steps.proof.outputs.changed }} changed/new"
             echo "- Cargo artifacts: ${{ steps.proof.outputs.fresh }} fresh, ${{ steps.proof.outputs.rebuilt }} rebuilt"
-            echo "- The signed chunk target was advanced in place and is the next rolling seed."
+            echo "- The authenticated target selected by the released CLI was advanced in place and is the next rolling seed."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload rolling evidence

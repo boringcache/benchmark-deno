@@ -12,7 +12,7 @@ BoringCache candidates:
 - a same-seed cohort that combines persistent `target/` with sccache on both
   sides and changes only archived-local versus eagerly warmed remote storage
 
-Stable proof runs pin `boringcache/one` `v1.16.2` by immutable commit and keep
+Stable proof runs pin `boringcache/one` `v1.16.3` by immutable commit and keep
 Rust installation in the host workflow. Canary runs require an exact immutable
 CLI tag.
 
@@ -128,27 +128,20 @@ sccache. The report refuses to compare different runner image releases, CPU
 models, core counts, memory classes, or compiler environments, and includes
 exact target freshness plus native hit/miss counts.
 
-The **Deno Cargo archive chunks canary** is the first-class product proof. An
-exact immutable CLI runs the pinned base and adjacent head entirely through
-`boringcache cargo`; the CLI owns target transport, source freshness, Cargo
-registry and Git state, and the sccache proxy. One local base target is
-published as both the ordinary deterministic Rust-tar archive and
-`archive-chunks-v1`, then
-fresh rolling runners consume each representation through the same command.
-Both representations and rolling consumers share the current run's compiler
-cache, published by that same base invocation; no historical cache generation
-is accepted. The workflow only scopes run-specific tags and verifies the signed
-result, Cargo JSON evidence, exact source mtimes, and native sccache counters.
-It fails on sccache's dedicated read and timeout counters and on
-`boringcache cargo --fail-on-cache-error`. It records, but does not misclassify,
-sccache's generic `Cache errors` counter: sccache also increments that counter
-for compiler/preprocessor failures used as feature probes by mixed Rust/C++
-builds such as Deno.
+The **Deno Cargo product proof** runs the pinned base and adjacent head through
+the exact released `boringcache cargo` command. The CLI owns target transport,
+source freshness, Cargo registry and Git state, and sccache. The benchmark owns
+only the adjacent source pair, Deno build preparation, wall time, and independent
+evidence.
 
-This canary does not run Deno's mtime Action or manually restore/save any Cargo
-surface. Its two Deno Cargo phases use the CLI's explicit lifecycle flags:
-restore happens on the first phase, save happens on the final phase, and both
-phases share the same target and sccache product plan.
+The base starts without `target/` and publishes through the normal read/write
+Cargo lifecycle. A fresh head runner restores through the same plan in
+read-only mode. The proof accepts the authenticated archive transport selected
+by the released CLI; archive-layout rollout experiments are separate. It
+verifies the executable target, exact unchanged-source mtimes, changed sources
+newer than restored artifacts, Cargo's fresh/rebuilt artifact messages, and
+native sccache counters. It does not run Deno's mtime Action or manually call
+`boringcache save` or `boringcache restore` for Cargo state.
 
 ## Run it
 
@@ -159,8 +152,8 @@ The repository needs these Actions secrets:
 
 Run **Deno release hybrid cache proof**, **Deno Linux debug cache proof**,
 either full-target proof, **Deno release sccache plus target cohort**, or
-**Deno Cargo archive chunks canary** from the Actions tab. The optional
-`cli_version` input can pin a canary CLI release. Full-target proofs also
+**Deno Cargo product proof** from the Actions tab. The `cli_version` input pins
+an exact released CLI. Full-target proofs also
 require the completed source proof run ID whose seed and Actions result should
 be reused. Each proof publishes one comparison table and JSON artifact.
 

@@ -1,0 +1,301 @@
+name: "Deno Cargo product proof"
+run-name: Deno Cargo product | ${{ inputs.cli_version }}
+
+on:
+  workflow_call:
+    inputs:
+      cli_version:
+        description: Exact immutable BoringCache CLI release tag.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      cli_version:
+        description: Exact immutable BoringCache CLI release tag.
+        required: true
+        type: string
+        default: v1.16.3
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  BENCHMARK_WORKSPACE: boringcache/benchmark-deno
+  DENO_BENCHMARK_PROFILE: release
+  CACHE_SCOPE: r${{ github.run_id }}-a${{ github.run_attempt }}
+
+jobs:
+  publish-base:
+    name: Publish adjacent base through boringcache cargo
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    outputs:
+      base_sha: ${{ steps.source.outputs.DENO_BASE_SHA }}
+      head_sha: ${{ steps.source.outputs.DENO_HEAD_SHA }}
+      transport: ${{ steps.target.outputs.transport }}
+    steps:
+      - name: Validate BoringCache secrets
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
+        run: |
+          [[ -n "$BORINGCACHE_RESTORE_TOKEN" ]] || { echo "Missing BoringCache restore token" >&2; exit 1; }
+          [[ -n "$BORINGCACHE_SAVE_TOKEN" ]] || { echo "Missing BoringCache save token" >&2; exit 1; }
+
+      - name: Checkout benchmark repository
+        uses: actions/checkout@v6
+
+      - name: Read pinned source
+        id: source
+        run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pinned Deno base
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
+          ref: ${{ steps.source.outputs.DENO_BASE_SHA }}
+          path: upstream
+          fetch-depth: 2
+          submodules: false
+
+      - name: Prepare base source
+        run: ./scripts/prepare-source.sh base
+
+      - name: Install Deno snapshot minifier runtime
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
+        with:
+          deno-version: v2.x
+
+      - name: Install the exact released BoringCache CLI
+        run: ./scripts/install-boringcache-cli.sh "${{ inputs.cli_version }}" linux-amd64
+
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install "${{ steps.source.outputs.DENO_RUST_VERSION }}" --profile minimal
+          rustup default "${{ steps.source.outputs.DENO_RUST_VERSION }}"
+
+      - name: Free runner disk space
+        run: ./scripts/free-runner-disk.sh
+
+      - name: Configure Deno Linux build environment
+        run: ./scripts/setup-deno-linux.sh
+
+      - name: Install exact sccache
+        run: ./scripts/install-sccache.sh 0.16.0
+
+      - name: Scope the isolated Cargo product plan
+        run: ./scripts/scope-boringcache-run.sh "$CACHE_SCOPE" "$CACHE_SCOPE" "" ""
+
+      - name: Require a clean product starting point
+        run: |
+          test ! -e upstream/target
+          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
+
+      - name: Build and publish through boringcache cargo
+        id: build
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
+          DENO_USE_BORINGCACHE_CARGO: "1"
+          DENO_BORINGCACHE_CARGO_ACCESS: publish
+          DENO_BORINGCACHE_METADATA_PHASE: base
+          DENO_BORINGCACHE_NATIVE_EVIDENCE_DIR: /tmp/deno-base-native
+          DENO_CARGO_EVIDENCE_FILE: /tmp/deno-base-cargo.jsonl
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/deno-base-native
+          started_at="$(date +%s)"
+          ./scripts/run-deno-build.sh \
+            > >(tee /tmp/deno-base-cargo-console.log) \
+            2> >(tee /tmp/deno-base-cli.log >&2)
+          echo "elapsed_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the published product state
+        id: target
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -x upstream/target/release/deno
+          test -s upstream/target/.boringcache/cargo-freshness-v2.json
+          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
+
+          boringcache check "$BENCHMARK_WORKSPACE" "deno-cargo-target-${CACHE_SCOPE}" --no-git --json \
+            | tee /tmp/deno-base-target-check.json
+          target_tag="$(jq -r '.results[] | select(.status == "hit") | .tag' /tmp/deno-base-target-check.json)"
+          [[ -n "$target_tag" ]] || { echo "Published target did not resolve" >&2; exit 1; }
+          boringcache inspect "$BENCHMARK_WORKSPACE" "$target_tag" --json \
+            | tee /tmp/deno-base-target.json
+          jq -e '.entry.status == "ready" and .entry.server_signed and (.entry.storage_mode == "archive" or (.entry.storage_mode == "cas" and .entry.storage_verified))' \
+            /tmp/deno-base-target.json
+
+          mapfile -t evidence < <(find /tmp/deno-base-native -type f -name '*.json' | sort)
+          [[ "${#evidence[@]}" -ge 2 ]]
+          jq -se '
+            all(.schema_version == "native_tool_evidence.v1" and .tool == "sccache") and
+            (map(.compile_requests // 0) | add) > 0 and
+            (map((.cache_hits // 0) + (.cache_misses // 0)) | add) > 0 and
+            (map(.cache_read_errors // 0) | add) == 0 and
+            (map(.cache_write_errors // 0) | add) == 0 and
+            (map(.cache_timeouts // 0) | add) == 0
+          ' "${evidence[@]}"
+
+          echo "transport=$(jq -r '.entry.cas_layout // .entry.storage_mode' /tmp/deno-base-target.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload base evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: deno-cargo-product-base
+          path: |
+            /tmp/deno-base-*.json
+            /tmp/deno-base-*.jsonl
+            /tmp/deno-base-*.log
+            /tmp/deno-base-native/*.json
+          if-no-files-found: error
+
+  consume-head:
+    name: Restore adjacent head through boringcache cargo
+    needs: publish-base
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Validate BoringCache restore secret
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+        run: |
+          [[ -n "$BORINGCACHE_RESTORE_TOKEN" ]] || { echo "Missing BoringCache restore token" >&2; exit 1; }
+
+      - name: Checkout benchmark repository
+        uses: actions/checkout@v6
+
+      - name: Read pinned source
+        id: source
+        run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pinned Deno head
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
+          ref: ${{ needs.publish-base.outputs.head_sha }}
+          path: upstream
+          fetch-depth: 2
+          submodules: false
+
+      - name: Prepare adjacent head source
+        run: |
+          ./scripts/prepare-source.sh head
+          test "$(git -C upstream rev-parse HEAD^)" = "${{ needs.publish-base.outputs.base_sha }}"
+
+      - name: Install Deno snapshot minifier runtime
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
+        with:
+          deno-version: v2.x
+
+      - name: Install the exact released BoringCache CLI
+        run: ./scripts/install-boringcache-cli.sh "${{ inputs.cli_version }}" linux-amd64
+
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install "${{ steps.source.outputs.DENO_RUST_VERSION }}" --profile minimal
+          rustup default "${{ steps.source.outputs.DENO_RUST_VERSION }}"
+
+      - name: Free runner disk space
+        run: ./scripts/free-runner-disk.sh
+
+      - name: Configure Deno Linux build environment
+        run: ./scripts/setup-deno-linux.sh
+
+      - name: Install exact sccache
+        run: ./scripts/install-sccache.sh 0.16.0
+
+      - name: Scope the same Cargo product plan
+        run: ./scripts/scope-boringcache-run.sh "$CACHE_SCOPE" "$CACHE_SCOPE" "" ""
+
+      - name: Require the published base and empty destination
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+        run: |
+          set -euo pipefail
+          test ! -e upstream/target
+          boringcache check "$BENCHMARK_WORKSPACE" "deno-cargo-target-${CACHE_SCOPE}" --no-git --json \
+            | tee /tmp/deno-head-target-check.json
+          target_tag="$(jq -r '.results[] | select(.status == "hit") | .tag' /tmp/deno-head-target-check.json)"
+          [[ -n "$target_tag" ]] || { echo "Published base target did not resolve" >&2; exit 1; }
+          boringcache inspect "$BENCHMARK_WORKSPACE" "$target_tag" --json \
+            | tee /tmp/deno-head-target.json
+          jq -e '.entry.status == "ready" and .entry.server_signed and (.entry.storage_mode == "archive" or (.entry.storage_mode == "cas" and .entry.storage_verified))' \
+            /tmp/deno-head-target.json
+
+      - name: Restore and build through boringcache cargo
+        id: build
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          DENO_USE_BORINGCACHE_CARGO: "1"
+          DENO_BORINGCACHE_CARGO_ACCESS: consume
+          DENO_BORINGCACHE_METADATA_PHASE: head
+          DENO_BORINGCACHE_NATIVE_EVIDENCE_DIR: /tmp/deno-head-native
+          DENO_CARGO_EVIDENCE_FILE: /tmp/deno-head-cargo.jsonl
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/deno-head-native benchmark-results
+          started_at="$(date +%s)"
+          ./scripts/run-deno-build.sh \
+            > >(tee /tmp/deno-head-cargo-console.log) \
+            2> >(tee /tmp/deno-head-cli.log >&2)
+          echo "elapsed_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
+
+      - name: Verify target, source freshness, Cargo, and sccache
+        id: proof
+        run: |
+          set -euo pipefail
+          test -x upstream/target/release/deno
+          target_size="$(du -sb upstream/target | awk '{ print $1 }')"
+          ./scripts/verify_boringcache_cargo.py \
+            --source-root upstream \
+            --target-root upstream/target \
+            --cli-log /tmp/deno-head-cli.log \
+            --cargo-messages /tmp/deno-head-cargo.jsonl \
+            --native-evidence-dir /tmp/deno-head-native \
+            --inspect-json /tmp/deno-head-target.json \
+            --elapsed-seconds "${{ steps.build.outputs.elapsed_seconds }}" \
+            --target-size-bytes "$target_size" \
+            --cli-version "${{ inputs.cli_version }}" \
+            --output benchmark-results/deno-cargo-product.json
+
+          jq -r '
+            "unchanged=\(.freshness.reused)\n" +
+            "changed=\(.freshness.changed)\n" +
+            "fresh=\(.cargo.fresh_targets)\n" +
+            "rebuilt=\(.cargo.rebuilt_targets)\n" +
+            "hits=\(.sccache.cache_hits)\n" +
+            "misses=\(.sccache.cache_misses)"
+          ' benchmark-results/deno-cargo-product.json >> "$GITHUB_OUTPUT"
+
+      - name: Publish product summary
+        run: |
+          {
+            echo "## Deno Cargo product proof"
+            echo
+            echo "- CLI: \`${{ inputs.cli_version }}\`"
+            echo "- Source: \`${{ needs.publish-base.outputs.base_sha }}\` → \`${{ needs.publish-base.outputs.head_sha }}\`"
+            echo "- End to end: ${{ steps.build.outputs.elapsed_seconds }}s"
+            echo "- Target transport: authenticated \`${{ needs.publish-base.outputs.transport }}\` selected by the released CLI"
+            echo "- Source freshness: ${{ steps.proof.outputs.unchanged }} unchanged, ${{ steps.proof.outputs.changed }} changed/new"
+            echo "- Cargo artifacts: ${{ steps.proof.outputs.fresh }} fresh, ${{ steps.proof.outputs.rebuilt }} rebuilt"
+            echo "- sccache: ${{ steps.proof.outputs.hits }} hits, ${{ steps.proof.outputs.misses }} misses, zero read/timeout failures"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload head evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: deno-cargo-product-head
+          path: |
+            benchmark-results/deno-cargo-product.json
+            /tmp/deno-head-*.json
+            /tmp/deno-head-*.jsonl
+            /tmp/deno-head-*.log
+            /tmp/deno-head-native/*.json
+          if-no-files-found: error

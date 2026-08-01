@@ -117,7 +117,7 @@ jobs:
 
       - name: Publish the restored paths to BoringCache
         id: cache
-        uses: boringcache/one@95fa333f602bbcf131274118e6f025650912fba0 # v1.16.2
+        uses: boringcache/one@b1d1e466317cde2d78a86f8cb94347deebb501e9 # v1.16.3
         with:
           setup: none
           cli-version: ${{ inputs.cli_version }}
@@ -162,8 +162,8 @@ jobs:
             --cache-mode full-target-archive-plus-sccache \
             --cache-components actions-cargo-paths,full-target-directory,remote-sccache \
             --cache-import-status promoted \
-            --cli-version "${{ inputs.cli_version || 'v1.16.2' }}" \
-            --action-sha 95fa333f602bbcf131274118e6f025650912fba0
+            --cli-version "${{ inputs.cli_version || 'v1.16.3' }}" \
+            --action-sha b1d1e466317cde2d78a86f8cb94347deebb501e9
 
       - name: Upload promoted base result
         uses: actions/upload-artifact@v6
@@ -236,7 +236,7 @@ jobs:
 
       - name: Restore the full target and remote compiler cache
         id: cache
-        uses: boringcache/one@95fa333f602bbcf131274118e6f025650912fba0 # v1.16.2
+        uses: boringcache/one@b1d1e466317cde2d78a86f8cb94347deebb501e9 # v1.16.3
         with:
           setup: none
           cli-version: ${{ inputs.cli_version }}
@@ -330,8 +330,8 @@ jobs:
             --require-sccache-evidence \
             --freshness-evidence-file benchmark-results/deno-full-target-freshness.json \
             --require-freshness-evidence \
-            --cli-version "${{ inputs.cli_version || 'v1.16.2' }}" \
-            --action-sha 95fa333f602bbcf131274118e6f025650912fba0
+            --cli-version "${{ inputs.cli_version || 'v1.16.3' }}" \
+            --action-sha b1d1e466317cde2d78a86f8cb94347deebb501e9
 
       - name: Upload rolling result
         uses: actions/upload-artifact@v6
