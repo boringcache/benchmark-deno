@@ -191,22 +191,28 @@ jobs:
             /tmp/deno-chain-head-inspect.json
           test "$(jq -r '.entry.id' /tmp/deno-chain-head-inspect.json)" != "${{ steps.base.outputs.entry_id }}"
 
-          mapfile -t native_evidence < <(find /tmp/deno-chain-native -type f -name '*.json' | sort)
-          [[ "${#native_evidence[@]}" -gt 0 ]]
-          jq -se '
-            all(.tool == "sccache") and
-            (map(.compile_requests // 0) | add) > 0 and
-            (map((.cache_hits // 0) + (.cache_misses // 0)) | add) > 0 and
-            (map(.cache_errors // 0) | add) == 0 and
-            (map(.cache_read_errors // 0) | add) == 0 and
-            (map(.cache_write_errors // 0) | add) == 0 and
-            (map(.cache_timeouts // 0) | add) == 0
-          ' "${native_evidence[@]}"
-
           unchanged="$(sed -nE 's/.*restored: ([0-9,]+) unchanged, ([0-9,]+) changed\/new;.*/\1/p' /tmp/deno-chain-cli.log | tail -n 1 | tr -d ',')"
           changed="$(sed -nE 's/.*restored: ([0-9,]+) unchanged, ([0-9,]+) changed\/new;.*/\2/p' /tmp/deno-chain-cli.log | tail -n 1 | tr -d ',')"
           fresh="$(jq -s '[.[] | select(.reason == "compiler-artifact" and .fresh == true)] | length' /tmp/deno-chain-cargo.jsonl)"
           rebuilt="$(jq -s '[.[] | select(.reason == "compiler-artifact" and .fresh == false)] | length' /tmp/deno-chain-cargo.jsonl)"
+
+          mapfile -t native_evidence < <(find /tmp/deno-chain-native -type f -name '*.json' | sort)
+          [[ "${#native_evidence[@]}" -gt 0 ]]
+          jq -se --argjson rebuilt "$rebuilt" '
+            all(.tool == "sccache") and
+            (map(.cache_errors // 0) | add) == 0 and
+            (map(.cache_read_errors // 0) | add) == 0 and
+            (map(.cache_write_errors // 0) | add) == 0 and
+            (map(.cache_timeouts // 0) | add) == 0 and
+            (
+              $rebuilt == 0 or
+              (
+                (map(.compile_requests // 0) | add) > 0 and
+                (map((.cache_hits // 0) + (.cache_misses // 0)) | add) > 0
+              )
+            )
+          ' "${native_evidence[@]}"
+
           # An adjacent docs or type-only commit may correctly rebuild nothing.
           # The changed source identity and new signed entry prove promotion.
           [[ "${unchanged:-0}" -gt 0 ]]
