@@ -21,6 +21,22 @@ on:
           - release-full-target
           - debug-full-target
           - cargo-archive-chunks
+          - cargo-rolling-chain
+      cache_scope:
+        description: Existing Cargo rolling scope; required by cargo-rolling-chain.
+        required: false
+        type: string
+        default: ""
+      base_sha:
+        description: Commit represented by the published target; required by cargo-rolling-chain.
+        required: false
+        type: string
+        default: ""
+      head_sha:
+        description: Immediate child to build and publish; required by cargo-rolling-chain.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   actions: write
@@ -29,7 +45,7 @@ permissions:
 jobs:
   actions-cache:
     name: Actions cache baseline
-    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-archive-chunks' }}
+    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-archive-chunks' && inputs.experiment != 'cargo-rolling-chain' }}
     uses: ./.github/workflows/deno-actions-cache.yml
     with:
       benchmark_id: ${{ inputs.experiment == 'debug' && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
@@ -39,7 +55,7 @@ jobs:
 
   boringcache:
     name: BoringCache candidate
-    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-archive-chunks' }}
+    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-archive-chunks' && inputs.experiment != 'cargo-rolling-chain' }}
     uses: ./.github/workflows/deno-boringcache.yml
     with:
       benchmark_id: ${{ inputs.experiment == 'debug' && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
@@ -71,9 +87,20 @@ jobs:
       cli_version: ${{ inputs.cli_version }}
     secrets: inherit
 
+  cargo-rolling-chain:
+    name: BoringCache Cargo rolling chain
+    if: ${{ inputs.experiment == 'cargo-rolling-chain' }}
+    uses: ./.github/workflows/deno-cargo-rolling-chain.yml
+    with:
+      cli_version: ${{ inputs.cli_version }}
+      cache_scope: ${{ inputs.cache_scope }}
+      base_sha: ${{ inputs.base_sha }}
+      head_sha: ${{ inputs.head_sha }}
+    secrets: inherit
+
   compare:
     name: Compare results
-    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-archive-chunks' }}
+    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-archive-chunks' && inputs.experiment != 'cargo-rolling-chain' }}
     needs: [actions-cache, boringcache]
     runs-on: ubuntu-24.04
     env:
