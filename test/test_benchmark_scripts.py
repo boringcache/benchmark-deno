@@ -49,12 +49,13 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
             "Build and publish the monolith through boringcache cargo", workflow
         )
         self.assertIn(
-            "Encode the frozen Cargo cohort as chunks through the archive CLI",
+            "Publish the frozen Cargo cohort as chunks through boringcache cargo",
             workflow,
         )
-        self.assertIn("publication boringcache-save", workflow)
-        self.assertEqual(workflow.count("DENO_BORINGCACHE_CARGO_ACCESS: publish"), 1)
-        self.assertIn('boringcache save "$BENCHMARK_WORKSPACE"', workflow)
+        self.assertEqual(workflow.count("publication boringcache-cargo"), 2)
+        self.assertEqual(workflow.count("DENO_BORINGCACHE_CARGO_ACCESS: publish"), 2)
+        self.assertIn('DENO_BORINGCACHE_SKIP_RESTORE: "1"', workflow)
+        self.assertNotIn('boringcache save "$BENCHMARK_WORKSPACE"', workflow)
         self.assertIn('storage_mode == "archive"', workflow)
         self.assertNotIn("run-deno-mtime-cache.js", workflow)
         self.assertNotIn("seed_target_tag", workflow)
