@@ -24,7 +24,7 @@ on:
         type: string
       cli_version:
         required: true
-        default: "v1.15.0"
+        default: "v1.16.3"
         type: string
 
 permissions:
@@ -100,7 +100,7 @@ jobs:
 
       - name: Restore the promoted target archive
         id: cache
-        uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e # v1.15.0
+        uses: boringcache/one@b1d1e466317cde2d78a86f8cb94347deebb501e9 # v1.16.3
         with:
           setup: none
           cli-version: ${{ inputs.cli_version }}
@@ -188,7 +188,7 @@ jobs:
             --freshness-evidence-file benchmark-results/deno-target-only-freshness.json \
             --require-freshness-evidence \
             --cli-version "${{ inputs.cli_version }}" \
-            --action-sha 8294be671cd5a2b73638df1b8e1e240df888297e
+            --action-sha b1d1e466317cde2d78a86f8cb94347deebb501e9
 
       - name: Upload target-only result
         uses: actions/upload-artifact@v6
