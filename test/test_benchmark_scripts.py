@@ -96,6 +96,7 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
         self.assertIn("install-sccache.sh 0.16.0", workflow)
         self.assertIn("verify_boringcache_cargo.py", workflow)
         self.assertIn("Require the current base sccache seed", workflow)
+        self.assertIn("(.cache_errors // 0)", workflow)
         self.assertIn(
             'sccache_tag="deno-rust-cache-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"',
             workflow,
@@ -297,6 +298,7 @@ class BoringCacheCargoEvidenceTest(unittest.TestCase):
                             "compile_requests": 5,
                             "cache_hits": 4,
                             "cache_misses": 1,
+                            "cache_errors": 0,
                             "cache_read_errors": 0,
                             "cache_write_errors": 1,
                             "cache_timeouts": 0,
@@ -323,6 +325,7 @@ class BoringCacheCargoEvidenceTest(unittest.TestCase):
                             "compile_requests": 6,
                             "cache_hits": 0,
                             "cache_misses": 3,
+                            "cache_errors": 0,
                             "cache_read_errors": 0,
                             "cache_write_errors": 0,
                             "cache_timeouts": 0,
@@ -335,6 +338,29 @@ class BoringCacheCargoEvidenceTest(unittest.TestCase):
             self.assertEqual(sccache["cache_hits"], 0)
             self.assertEqual(sccache["cache_misses"], 6)
             self.assertEqual(sccache["hit_rate"], 0.0)
+
+    def test_rejects_native_sccache_request_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            native = Path(directory)
+            for phase, errors in (("primary", 1), ("desktop", 0)):
+                (native / f"{phase}.json").write_text(
+                    json.dumps(
+                        {
+                            "schema_version": "native_tool_evidence.v1",
+                            "tool": "sccache",
+                            "compile_requests": 6,
+                            "cache_hits": 1,
+                            "cache_misses": 2,
+                            "cache_errors": errors,
+                            "cache_read_errors": 0,
+                            "cache_write_errors": 0,
+                            "cache_timeouts": 0,
+                        }
+                    )
+                )
+
+            with self.assertRaisesRegex(ValueError, "request errors"):
+                verify_boringcache_cargo.verify_sccache(native)
 
     def test_comparison_formats_gibibytes_without_claiming_attribution(self):
         self.assertEqual(render_cargo_transport_comparison.gib(5 * 1024**3), "5.00 GiB")

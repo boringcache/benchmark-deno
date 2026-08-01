@@ -160,6 +160,7 @@ def verify_sccache(directory: Path) -> dict[str, int | float]:
         "compile_requests": 0,
         "cache_hits": 0,
         "cache_misses": 0,
+        "cache_errors": 0,
         "cache_read_errors": 0,
         "cache_write_errors": 0,
         "cache_timeouts": 0,
@@ -177,8 +178,10 @@ def verify_sccache(directory: Path) -> dict[str, int | float]:
         raise ValueError(
             "The rolling build produced no native sccache request evidence"
         )
-    if totals["cache_read_errors"] or totals["cache_timeouts"]:
-        raise ValueError("The rolling build reported sccache read errors or timeouts")
+    if totals["cache_errors"] or totals["cache_read_errors"] or totals["cache_timeouts"]:
+        raise ValueError(
+            "The rolling build reported sccache request errors, read errors, or timeouts"
+        )
     return {
         **totals,
         "hit_rate": round(totals["cache_hits"] * 100 / attempts, 2)

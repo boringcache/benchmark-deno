@@ -130,6 +130,16 @@ jobs:
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
         run: |
+          jq -s -e '
+            map(select(.schema_version == "native_tool_evidence.v1" and .tool == "sccache")) as $rows
+            | ($rows | length) >= 2
+            and ([$rows[] | (.compile_requests // 0)] | add) > 0
+            and ([ $rows[] | ((.cache_hits // 0) + (.cache_misses // 0)) ] | add) > 0
+            and ([ $rows[] | (.cache_errors // 0) ] | add) == 0
+            and ([ $rows[] | (.cache_read_errors // 0) ] | add) == 0
+            and ([ $rows[] | (.cache_write_errors // 0) ] | add) == 0
+            and ([ $rows[] | (.cache_timeouts // 0) ] | add) == 0
+          ' /tmp/deno-base-native-monolith/*.json
           target_tag_raw="deno-cargo-target-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}-monolith"
           boringcache check "$BENCHMARK_WORKSPACE" "$target_tag_raw" --no-git --json \
             | tee /tmp/deno-base-check-monolith.json
