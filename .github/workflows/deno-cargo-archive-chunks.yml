@@ -135,7 +135,6 @@ jobs:
             | ($rows | length) >= 2
             and ([$rows[] | (.compile_requests // 0)] | add) > 0
             and ([ $rows[] | ((.cache_hits // 0) + (.cache_misses // 0)) ] | add) > 0
-            and ([ $rows[] | (.cache_errors // 0) ] | add) == 0
             and ([ $rows[] | (.cache_read_errors // 0) ] | add) == 0
             and ([ $rows[] | (.cache_write_errors // 0) ] | add) == 0
             and ([ $rows[] | (.cache_timeouts // 0) ] | add) == 0
@@ -436,7 +435,7 @@ jobs:
 
       - name: Publish proof summary
         run: |
-          jq -r '"### " + (.transport | ascii_upcase) + " Cargo proof\n\n- End to end: " + (.elapsed_seconds | tostring) + "s\n- Target: " + ((.target_size_bytes / 1073741824) | tostring) + " GiB\n- Layout: " + (.archive.cas_layout // .archive.storage_mode) + "\n- Cargo: " + (.cargo.fresh_targets | tostring) + " fresh, " + (.cargo.rebuilt_targets | tostring) + " rebuilt\n- sccache: " + (.sccache.cache_hits | tostring) + " hits, " + (.sccache.cache_misses | tostring) + " misses, " + (.sccache.cache_write_errors | tostring) + " read-only miss writes suppressed; zero generic/read/timeout failures"' \
+          jq -r '"### " + (.transport | ascii_upcase) + " Cargo proof\n\n- End to end: " + (.elapsed_seconds | tostring) + "s\n- Target: " + ((.target_size_bytes / 1073741824) | tostring) + " GiB\n- Layout: " + (.archive.cas_layout // .archive.storage_mode) + "\n- Cargo: " + (.cargo.fresh_targets | tostring) + " fresh, " + (.cargo.rebuilt_targets | tostring) + " rebuilt\n- sccache: " + (.sccache.cache_hits | tostring) + " hits, " + (.sccache.cache_misses | tostring) + " misses, " + (.sccache.cache_errors | tostring) + " generic compiler/preprocessor errors reported, " + (.sccache.cache_write_errors | tostring) + " read-only miss writes suppressed; zero cache read/timeout failures"' \
             "benchmark-results/proof-${{ matrix.transport }}.json" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload rolling evidence

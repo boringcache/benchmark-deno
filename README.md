@@ -139,6 +139,11 @@ Both representations and rolling consumers share the current run's compiler
 cache, published by that same base invocation; no historical cache generation
 is accepted. The workflow only scopes run-specific tags and verifies the signed
 result, Cargo JSON evidence, exact source mtimes, and native sccache counters.
+It fails on sccache's dedicated read and timeout counters and on
+`boringcache cargo --fail-on-cache-error`. It records, but does not misclassify,
+sccache's generic `Cache errors` counter: sccache also increments that counter
+for compiler/preprocessor failures used as feature probes by mixed Rust/C++
+builds such as Deno.
 
 This canary does not run Deno's mtime Action or manually restore/save any Cargo
 surface. Its two Deno Cargo phases use the CLI's explicit lifecycle flags:

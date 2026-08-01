@@ -178,9 +178,16 @@ def verify_sccache(directory: Path) -> dict[str, int | float]:
         raise ValueError(
             "The rolling build produced no native sccache request evidence"
         )
-    if totals["cache_errors"] or totals["cache_read_errors"] or totals["cache_timeouts"]:
+    # sccache's generic "Cache errors" counter also includes compiler-side
+    # preprocessing failures. Native build systems deliberately use some of
+    # those failures as feature probes, so a successful mixed Rust/C++ build
+    # can report this counter without a cache transport failure. The dedicated
+    # read/timeout counters and boringcache cargo --fail-on-cache-error are the
+    # product-health boundary; keep the generic counter in evidence instead of
+    # misclassifying it or hiding it.
+    if totals["cache_read_errors"] or totals["cache_timeouts"]:
         raise ValueError(
-            "The rolling build reported sccache request errors, read errors, or timeouts"
+            "The rolling build reported sccache read errors or timeouts"
         )
     return {
         **totals,
