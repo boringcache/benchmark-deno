@@ -12,7 +12,7 @@ BoringCache candidates:
 - a same-seed cohort that combines persistent `target/` with sccache on both
   sides and changes only archived-local versus eagerly warmed remote storage
 
-Stable proof runs pin `boringcache/one` `v1.15.0` by immutable commit and keep
+Stable proof runs pin `boringcache/one` `v1.16.2` by immutable commit and keep
 Rust installation in the host workflow. Canary runs require an exact immutable
 CLI tag.
 

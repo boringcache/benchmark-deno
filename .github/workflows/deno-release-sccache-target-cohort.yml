@@ -6,7 +6,7 @@ on:
     inputs:
       cli_version:
         required: true
-        default: "v1.15.0"
+        default: "v1.16.2"
         type: string
 
 permissions:
@@ -17,7 +17,7 @@ env:
   BENCHMARK_ID: deno-release-rust-cache
   BENCHMARK_WORKSPACE: ${{ github.repository }}
   DENO_BENCHMARK_PROFILE: release
-  RELEASE_ACTION_SHA: 8294be671cd5a2b73638df1b8e1e240df888297e
+  RELEASE_ACTION_SHA: 95fa333f602bbcf131274118e6f025650912fba0
 
 jobs:
   seed:
@@ -80,7 +80,7 @@ jobs:
 
       - name: Configure BoringCache sccache and target publication
         id: cache
-        uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e # v1.15.0
+        uses: boringcache/one@95fa333f602bbcf131274118e6f025650912fba0 # v1.16.2
         with:
           setup: none
           cli-version: ${{ inputs.cli_version }}
@@ -391,7 +391,7 @@ jobs:
 
       - name: Restore the shared BoringCache target and sccache
         id: cache
-        uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e # v1.15.0
+        uses: boringcache/one@95fa333f602bbcf131274118e6f025650912fba0 # v1.16.2
         with:
           setup: none
           cli-version: ${{ inputs.cli_version }}

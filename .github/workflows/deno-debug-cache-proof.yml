@@ -21,7 +21,7 @@ jobs:
     with:
       benchmark_id: deno-debug-rust-cache
       build_profile: debug
-      cli_version: ${{ inputs.cli_version || 'v1.15.0' }}
+      cli_version: ${{ inputs.cli_version || 'v1.16.2' }}
     secrets: inherit
 
   boringcache:

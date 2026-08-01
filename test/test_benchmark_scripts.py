@@ -70,7 +70,7 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
             workflow,
         )
         self.assertIn(
-            "uses: boringcache/one@8294be671cd5a2b73638df1b8e1e240df888297e",
+            "uses: boringcache/one@95fa333f602bbcf131274118e6f025650912fba0",
             workflow,
         )
         self.assertEqual(workflow.count("uses: boringcache/one@"), 2)
