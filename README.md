@@ -132,7 +132,8 @@ The **Deno Cargo archive chunks canary** is the first-class product proof. An
 exact immutable CLI runs the pinned base and adjacent head entirely through
 `boringcache cargo`; the CLI owns target transport, source freshness, Cargo
 registry and Git state, and the sccache proxy. One local base target is
-published as both the ordinary GNU-tar archive and `archive-chunks-v1`, then
+published as both the ordinary deterministic Rust-tar archive and
+`archive-chunks-v1`, then
 fresh rolling runners consume each representation through the same command.
 Both representations and rolling consumers share the current run's compiler
 cache, published by that same base invocation; no historical cache generation
