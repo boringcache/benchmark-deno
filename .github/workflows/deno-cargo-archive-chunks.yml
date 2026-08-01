@@ -185,7 +185,7 @@ jobs:
             "-chunks" \
             ""
 
-      - name: Publish the frozen Cargo cohort as chunks through boringcache cargo
+      - name: Republish the built target as chunks through boringcache cargo
         id: publish-chunks
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
@@ -235,25 +235,25 @@ jobs:
           echo "tag=${target_tag}" >> "$GITHUB_OUTPUT"
           echo "target_size_bytes=${target_size}" >> "$GITHUB_OUTPUT"
 
-      - name: Prove both transports captured one local target cohort
+      - name: Prove both transports captured the same target files and bytes
         run: |
           test -x upstream/target/release/deno
           test -s upstream/target/.boringcache/cargo-freshness-v2.json
-          if ! cmp -s \
-            /tmp/deno-base-target-monolith.json \
-            /tmp/deno-base-target-chunks.json; then
-            ./scripts/compare_target_snapshots.py \
-              --actions /tmp/deno-base-target-monolith.json \
-              --boringcache /tmp/deno-base-target-chunks.json \
-              --output /tmp/deno-base-target-cohort-difference.json
-          fi
+          ./scripts/compare_target_snapshots.py \
+            --actions /tmp/deno-base-target-monolith.json \
+            --boringcache /tmp/deno-base-target-chunks.json \
+            --output /tmp/deno-base-target-cohort-comparison.json \
+            --require-content-match
           jq -n \
-            --arg schema_version deno_boringcache_cargo_target_cohort.v1 \
+            --arg schema_version deno_boringcache_cargo_target_cohort.v2 \
             --arg excluded_prefix .boringcache \
             --slurpfile monolith /tmp/deno-base-target-monolith.json \
             --slurpfile chunks /tmp/deno-base-target-chunks.json \
-            '{schema_version: $schema_version, exact_match: true, excluded_prefix: $excluded_prefix, entry_count: $monolith[0].entry_count, entries_sha256: $monolith[0].entries_sha256, monolith_target_size_bytes: ${{ steps.target-monolith.outputs.target_size_bytes }}, chunks_target_size_bytes: ${{ steps.target-chunks.outputs.target_size_bytes }}}' \
+            --slurpfile comparison /tmp/deno-base-target-cohort-comparison.json \
+            '{schema_version: $schema_version, content_exact_match: $comparison[0].content_exact_match, metadata_exact_match: $comparison[0].exact_match, mtime_only_differences_count: $comparison[0].mtime_only_differences_count, excluded_prefix: $excluded_prefix, entry_count: $monolith[0].entry_count, content_entries_sha256: $monolith[0].content_entries_sha256, monolith_entries_sha256: $monolith[0].entries_sha256, chunks_entries_sha256: $chunks[0].entries_sha256, monolith_target_size_bytes: ${{ steps.target-monolith.outputs.target_size_bytes }}, chunks_target_size_bytes: ${{ steps.target-chunks.outputs.target_size_bytes }}}' \
             > benchmark-results/base-target-cohort.json
+          cp /tmp/deno-base-target-cohort-comparison.json \
+            benchmark-results/base-target-cohort-comparison.json
 
       - name: Write chunk base evidence
         run: |

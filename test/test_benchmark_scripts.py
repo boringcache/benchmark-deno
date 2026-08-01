@@ -49,7 +49,7 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
             "Build and publish the monolith through boringcache cargo", workflow
         )
         self.assertIn(
-            "Publish the frozen Cargo cohort as chunks through boringcache cargo",
+            "Republish the built target as chunks through boringcache cargo",
             workflow,
         )
         self.assertEqual(workflow.count("publication boringcache-cargo"), 2)
@@ -63,7 +63,8 @@ class CargoArchiveChunksWorkflowTest(unittest.TestCase):
         self.assertNotIn("boringcache restore", workflow)
         self.assertNotIn("uses: actions/cache/restore@", workflow)
         self.assertEqual(workflow.count("--exclude-prefix .boringcache"), 2)
-        self.assertIn("cmp -s", workflow)
+        self.assertIn("--require-content-match", workflow)
+        self.assertIn("mtime_only_differences_count", workflow)
         self.assertNotIn(
             '[[ "${{ steps.target-monolith.outputs.target_size_bytes }}" ==',
             workflow,
@@ -548,7 +549,34 @@ class TargetSnapshotTest(unittest.TestCase):
             comparison = compare_target_snapshots.compare(left, right)
 
             self.assertTrue(comparison["exact_match"])
+            self.assertTrue(comparison["content_exact_match"])
             self.assertEqual(left["entries_sha256"], right["entries_sha256"])
+            self.assertEqual(
+                left["content_entries_sha256"],
+                right["content_entries_sha256"],
+            )
+
+    def test_reports_cargo_mtime_only_drift_without_hiding_content_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            before = root / "before"
+            after = root / "after"
+            before.mkdir()
+            after.mkdir()
+            (before / "artifact").write_bytes(b"same artifact")
+            (after / "artifact").write_bytes(b"same artifact")
+            os.utime(before / "artifact", ns=(1, 1))
+            os.utime(after / "artifact", ns=(2, 2))
+
+            comparison = compare_target_snapshots.compare(
+                snapshot_target_state.snapshot(before),
+                snapshot_target_state.snapshot(after),
+            )
+
+            self.assertFalse(comparison["exact_match"])
+            self.assertTrue(comparison["content_exact_match"])
+            self.assertEqual(comparison["mtime_only_differences_count"], 1)
+            self.assertEqual(comparison["content_different_entries_count"], 0)
 
     def test_can_exclude_transport_metadata_from_the_target_payload(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -596,6 +624,7 @@ class TargetSnapshotTest(unittest.TestCase):
             )
 
             self.assertFalse(comparison["exact_match"])
+            self.assertFalse(comparison["content_exact_match"])
             self.assertEqual(comparison["different_entries_count"], 1)
             self.assertEqual(comparison["differences"][0]["path"], "artifact")
             self.assertIn("sha256", comparison["differences"][0]["fields"])

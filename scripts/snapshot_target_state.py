@@ -150,6 +150,13 @@ def snapshot(
         entries.append(record)
 
     canonical = json.dumps(entries, sort_keys=True, separators=(",", ":"))
+    content_entries = [
+        {key: value for key, value in entry.items() if key != "mtime_ns"}
+        for entry in entries
+    ]
+    content_canonical = json.dumps(
+        content_entries, sort_keys=True, separators=(",", ":")
+    )
     return {
         "schema_version": "deno_target_snapshot.v1",
         "root_name": root.name,
@@ -159,6 +166,9 @@ def snapshot(
         "total_file_bytes": total_file_bytes,
         "allocated_bytes": allocated_bytes,
         "entries_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
+        "content_entries_sha256": hashlib.sha256(
+            content_canonical.encode()
+        ).hexdigest(),
         "entries": entries,
     }
 

@@ -86,7 +86,7 @@ def main() -> int:
             "|---|---|---:|---:|---:|---:|---|---:|---:|",
             *rows,
             "",
-            "The base target is produced once by `boringcache cargo`, then the frozen cohort is encoded through both generic archive transports. The monolith base duration includes the Cargo build, while the chunk duration measures only the second encoding, so those base durations are evidence rather than a direct comparison. Both rolling lanes consume the same CLI-owned Cargo plan and differ only by archive transport.",
+            "The base target is produced once by `boringcache cargo`, then the same target file graph and bytes are encoded through both generic archive transports. A second no-op Cargo invocation may touch Cargo-owned mtimes; the cohort evidence reports that metadata drift separately, while each archive must restore its own exact mtimes. The monolith base duration includes the Cargo build, while the chunk duration measures only the second encoding, so those base durations are evidence rather than a direct comparison. Both rolling lanes consume the same CLI-owned Cargo plan and differ only by archive transport.",
             "",
         ]
     )
