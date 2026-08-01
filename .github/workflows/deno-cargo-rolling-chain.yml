@@ -207,10 +207,11 @@ jobs:
           changed="$(sed -nE 's/.*restored: ([0-9,]+) unchanged, ([0-9,]+) changed\/new;.*/\2/p' /tmp/deno-chain-cli.log | tail -n 1 | tr -d ',')"
           fresh="$(jq -s '[.[] | select(.reason == "compiler-artifact" and .fresh == true)] | length' /tmp/deno-chain-cargo.jsonl)"
           rebuilt="$(jq -s '[.[] | select(.reason == "compiler-artifact" and .fresh == false)] | length' /tmp/deno-chain-cargo.jsonl)"
+          # An adjacent docs or type-only commit may correctly rebuild nothing.
+          # The changed source identity and new signed entry prove promotion.
           [[ "${unchanged:-0}" -gt 0 ]]
           [[ "${changed:-0}" -gt 0 ]]
           [[ "$fresh" -gt 0 ]]
-          [[ "$rebuilt" -gt 0 ]]
           {
             echo "unchanged=${unchanged}"
             echo "changed=${changed}"
