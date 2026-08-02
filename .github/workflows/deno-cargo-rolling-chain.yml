@@ -12,6 +12,11 @@ on:
         description: Existing rolling scope whose target was published from base_sha.
         required: true
         type: string
+      archive_tag_suffix:
+        description: Suffix on the already-published archive tags, such as -chunks.
+        required: false
+        type: string
+        default: ""
       base_sha:
         description: Source commit currently represented by the published target.
         required: true
@@ -31,6 +36,11 @@ on:
         description: Existing rolling scope whose target was published from base_sha.
         required: true
         type: string
+      archive_tag_suffix:
+        description: Suffix on the already-published archive tags, such as -chunks.
+        required: false
+        type: string
+        default: ""
       base_sha:
         description: Source commit currently represented by the published target.
         required: true
@@ -113,7 +123,7 @@ jobs:
           ./scripts/scope-boringcache-run.sh \
             "${{ inputs.cache_scope }}" \
             "${{ inputs.cache_scope }}" \
-            "" \
+            "${{ inputs.archive_tag_suffix }}" \
             ""
 
       - name: Require the published base target and sccache seed
@@ -123,7 +133,7 @@ jobs:
         run: |
           set -euo pipefail
           test ! -e upstream/target
-          target_tag_raw="deno-cargo-target-${{ inputs.cache_scope }}"
+          target_tag_raw="deno-cargo-target-${{ inputs.cache_scope }}${{ inputs.archive_tag_suffix }}"
           boringcache check "$BENCHMARK_WORKSPACE" "$target_tag_raw" --no-git --json \
             | tee /tmp/deno-chain-base-check.json
           target_tag="$(jq -r '.results[] | select(.status == "hit") | .tag' /tmp/deno-chain-base-check.json)"
@@ -175,7 +185,7 @@ jobs:
           test -s upstream/target/.boringcache/cargo-freshness-v2.json
           test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
 
-          target_tag_raw="deno-cargo-target-${{ inputs.cache_scope }}"
+          target_tag_raw="deno-cargo-target-${{ inputs.cache_scope }}${{ inputs.archive_tag_suffix }}"
           boringcache check "$BENCHMARK_WORKSPACE" "$target_tag_raw" --no-git --json \
             | tee /tmp/deno-chain-head-check.json
           target_tag="$(jq -r '.results[] | select(.status == "hit") | .tag' /tmp/deno-chain-head-check.json)"

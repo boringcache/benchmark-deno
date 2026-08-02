@@ -86,6 +86,20 @@ class CargoProductWorkflowTest(unittest.TestCase):
             self.assertNotIn("--skip-save", arguments)
             self.assertNotIn("--skip-restore", arguments)
 
+    def test_rolling_chain_preserves_the_published_archive_tag_identity(self):
+        workflow = (ROOT / ".github/workflows/deno-cargo-rolling-chain.yml").read_text()
+        dispatcher = (ROOT / ".github/workflows/deno-rust-cache-proof.yml").read_text()
+
+        self.assertIn("archive_tag_suffix:", workflow)
+        self.assertIn('"${{ inputs.archive_tag_suffix }}"', workflow)
+        self.assertEqual(
+            workflow.count(
+                "deno-cargo-target-${{ inputs.cache_scope }}${{ inputs.archive_tag_suffix }}"
+            ),
+            2,
+        )
+        self.assertIn("archive_tag_suffix: ${{ inputs.archive_tag_suffix }}", dispatcher)
+
 
 class CargoProductEvidenceTest(unittest.TestCase):
     def test_rejects_non_json_text_on_cargo_stdout(self):
