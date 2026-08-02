@@ -149,6 +149,11 @@ newer than restored artifacts, Cargo's fresh/rebuilt artifact messages, and
 native sccache counters. It does not run Deno's mtime Action or manually call
 `boringcache save` or `boringcache restore` for Cargo state.
 
+Deno's release build has primary and desktop Cargo phases. The primary phase
+keeps the CLI-owned sccache proxy writable but passes the standard
+`boringcache cargo --skip-save` lifecycle option; the final desktop phase
+publishes the composed dependency and target state once.
+
 ## Run it
 
 The repository needs these Actions secrets:
