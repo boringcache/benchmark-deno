@@ -134,6 +134,12 @@ source freshness, Cargo registry and Git state, and sccache. The benchmark owns
 only the adjacent source pair, Deno build preparation, wall time, and independent
 evidence.
 
+The adjacent-commit rolling chain also records target accumulation from the
+authenticated entries selected by that CLI. It compares stored and
+uncompressed bytes only when both entries use the same archive layout; a
+layout transition is reported explicitly instead of producing a false growth
+delta.
+
 The base starts without `target/` and publishes through the normal read/write
 Cargo lifecycle. A fresh head runner restores through the same plan in
 read-only mode. The proof accepts the authenticated archive transport selected
@@ -142,6 +148,11 @@ verifies the executable target, exact unchanged-source mtimes, changed sources
 newer than restored artifacts, Cargo's fresh/rebuilt artifact messages, and
 native sccache counters. It does not run Deno's mtime Action or manually call
 `boringcache save` or `boringcache restore` for Cargo state.
+
+Deno's release build has primary and desktop Cargo phases. The primary phase
+keeps the CLI-owned sccache proxy writable but passes the standard
+`boringcache cargo --skip-save` lifecycle option; the final desktop phase
+publishes the composed dependency and target state once.
 
 ## Run it
 

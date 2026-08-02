@@ -16,6 +16,9 @@ if [[ "${DENO_USE_BORINGCACHE_CARGO:-0}" == "1" ]]; then
       exit 1
       ;;
   esac
+  if [[ "${DENO_BORINGCACHE_CARGO_SKIP_SAVE:-0}" == "1" ]]; then
+    command+=(--skip-save)
+  fi
   if [[ -n "${DENO_BORINGCACHE_NATIVE_EVIDENCE_DIR:-}" ]]; then
     phase="${DENO_CARGO_PHASE:-build}"
     command+=(--native-tool-evidence-json "${DENO_BORINGCACHE_NATIVE_EVIDENCE_DIR}/${phase}.json")

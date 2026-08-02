@@ -8,6 +8,7 @@ export CARGO_INCREMENTAL=0
 export DENO_CANARY=true
 export DENO_SNAPSHOT_MINIFY_SOURCES=1
 
+DENO_BORINGCACHE_CARGO_SKIP_SAVE=1 \
 DENO_CARGO_PHASE=primary \
   "${repo_root}/scripts/run-cargo-build.sh" --release --locked \
   -p deno \

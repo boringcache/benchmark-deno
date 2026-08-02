@@ -199,6 +199,7 @@ jobs:
           changed="$(sed -nE 's/.*restored: ([0-9,]+) unchanged, ([0-9,]+) changed\/new;.*/\2/p' /tmp/deno-chain-cli.log | tail -n 1 | tr -d ',')"
           fresh="$(jq -s '[.[] | select(.reason == "compiler-artifact" and .fresh == true)] | length' /tmp/deno-chain-cargo.jsonl)"
           rebuilt="$(jq -s '[.[] | select(.reason == "compiler-artifact" and .fresh == false)] | length' /tmp/deno-chain-cargo.jsonl)"
+          target_saves="$(grep -c '^Completed saving deno-cargo-target-' /tmp/deno-chain-cli.log || true)"
 
           mapfile -t native_evidence < <(find /tmp/deno-chain-native -type f -name '*.json' | sort)
           [[ "${#native_evidence[@]}" -gt 0 ]]
@@ -221,11 +222,82 @@ jobs:
           [[ "${unchanged:-0}" -gt 0 ]]
           [[ "${changed:-0}" -gt 0 ]]
           [[ "$fresh" -gt 0 ]]
+          [[ "$target_saves" -eq 1 ]]
           {
             echo "unchanged=${unchanged}"
             echo "changed=${changed}"
             echo "fresh=${fresh}"
             echo "rebuilt=${rebuilt}"
+            echo "target_saves=${target_saves}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record target accumulation
+        id: target_growth
+        run: |
+          set -euo pipefail
+          jq -n \
+            --slurpfile base /tmp/deno-chain-base-inspect.json \
+            --slurpfile head /tmp/deno-chain-head-inspect.json '
+              def stored_bytes:
+                .stored_size_bytes // .compressed_size // .blob_total_size_bytes;
+              def layout_id:
+                [
+                  .storage_mode,
+                  .cas_layout,
+                  .compression_algorithm,
+                  (if .manifest_format_version == null then null
+                   else "manifest-v\(.manifest_format_version)" end)
+                ] | map(select(. != null)) | join(":");
+              ($base[0].entry) as $before |
+              ($head[0].entry) as $after |
+              (($before | layout_id) == ($after | layout_id)) as $comparable |
+              {
+                schema_version: "cargo_target_growth.v1",
+                comparable: $comparable,
+                reason: (if $comparable then null else "storage_layout_changed" end),
+                base: {
+                  entry_id: $before.id,
+                  layout: ($before | layout_id),
+                  storage_mode: $before.storage_mode,
+                  cas_layout: ($before.cas_layout // null),
+                  compression_algorithm: ($before.compression_algorithm // null),
+                  manifest_format_version: ($before.manifest_format_version // null),
+                  stored_size_bytes: ($before | stored_bytes),
+                  uncompressed_size_bytes: ($before.uncompressed_size // null)
+                },
+                head: {
+                  entry_id: $after.id,
+                  layout: ($after | layout_id),
+                  storage_mode: $after.storage_mode,
+                  cas_layout: ($after.cas_layout // null),
+                  compression_algorithm: ($after.compression_algorithm // null),
+                  manifest_format_version: ($after.manifest_format_version // null),
+                  stored_size_bytes: ($after | stored_bytes),
+                  uncompressed_size_bytes: ($after.uncompressed_size // null)
+                },
+                stored_size_bytes_delta: (
+                  if $comparable and (($before | stored_bytes) != null) and (($after | stored_bytes) != null)
+                  then ($after | stored_bytes) - ($before | stored_bytes)
+                  else null end
+                ),
+                uncompressed_size_bytes_delta: (
+                  if $comparable and ($before.uncompressed_size != null) and ($after.uncompressed_size != null)
+                  then $after.uncompressed_size - $before.uncompressed_size
+                  else null end
+                )
+              }
+            ' | tee /tmp/deno-chain-target-growth.json
+
+          jq -e '.schema_version == "cargo_target_growth.v1"' /tmp/deno-chain-target-growth.json
+          {
+            echo "comparable=$(jq -r '.comparable' /tmp/deno-chain-target-growth.json)"
+            echo "layout=$(jq -r '.head.layout' /tmp/deno-chain-target-growth.json)"
+            echo "stored_before=$(jq -r '.base.stored_size_bytes // "unavailable"' /tmp/deno-chain-target-growth.json)"
+            echo "stored_after=$(jq -r '.head.stored_size_bytes // "unavailable"' /tmp/deno-chain-target-growth.json)"
+            echo "stored_delta=$(jq -r '.stored_size_bytes_delta // "not-comparable"' /tmp/deno-chain-target-growth.json)"
+            echo "uncompressed_before=$(jq -r '.base.uncompressed_size_bytes // "unavailable"' /tmp/deno-chain-target-growth.json)"
+            echo "uncompressed_after=$(jq -r '.head.uncompressed_size_bytes // "unavailable"' /tmp/deno-chain-target-growth.json)"
+            echo "uncompressed_delta=$(jq -r '.uncompressed_size_bytes_delta // "unavailable"' /tmp/deno-chain-target-growth.json)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Publish rolling cadence summary
@@ -238,6 +310,10 @@ jobs:
             echo "- End to end: ${{ steps.build.outputs.elapsed_seconds }}s"
             echo "- Source freshness: ${{ steps.proof.outputs.unchanged }} unchanged, ${{ steps.proof.outputs.changed }} changed/new"
             echo "- Cargo artifacts: ${{ steps.proof.outputs.fresh }} fresh, ${{ steps.proof.outputs.rebuilt }} rebuilt"
+            echo "- Target publications: ${{ steps.proof.outputs.target_saves }}"
+            echo "- Target layout: ${{ steps.target_growth.outputs.layout }} (comparable=${{ steps.target_growth.outputs.comparable }})"
+            echo "- Target stored bytes: ${{ steps.target_growth.outputs.stored_before }} → ${{ steps.target_growth.outputs.stored_after }} (delta ${{ steps.target_growth.outputs.stored_delta }})"
+            echo "- Target uncompressed bytes: ${{ steps.target_growth.outputs.uncompressed_before }} → ${{ steps.target_growth.outputs.uncompressed_after }} (delta ${{ steps.target_growth.outputs.uncompressed_delta }})"
             echo "- The authenticated target selected by the released CLI was advanced in place and is the next rolling seed."
           } >> "$GITHUB_STEP_SUMMARY"
 
