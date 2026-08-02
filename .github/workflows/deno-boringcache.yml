@@ -100,7 +100,7 @@ jobs:
 
       - name: Configure BoringCache Rust compiler cache
         id: cache
-        uses: boringcache/one@b1d1e466317cde2d78a86f8cb94347deebb501e9 # v1.16.3
+        uses: boringcache/one@bf810e34331db84f9f11930e83b8813b5ad31ba1 # v1.16.4
         with:
           setup: none
           cli-version: ${{ inputs.cli_version }}
@@ -176,8 +176,8 @@ jobs:
             --cache-import-status cold \
             --sccache-stats-file /tmp/deno-base-sccache-stats.txt \
             --require-sccache-evidence \
-            --cli-version "${{ inputs.cli_version || 'v1.16.3' }}" \
-            --action-sha b1d1e466317cde2d78a86f8cb94347deebb501e9
+            --cli-version "${{ inputs.cli_version || 'v1.16.4' }}" \
+            --action-sha bf810e34331db84f9f11930e83b8813b5ad31ba1
 
       - name: Upload base result
         uses: actions/upload-artifact@v6
@@ -239,7 +239,7 @@ jobs:
 
       - name: Restore BoringCache Rust compiler cache
         id: cache
-        uses: boringcache/one@b1d1e466317cde2d78a86f8cb94347deebb501e9 # v1.16.3
+        uses: boringcache/one@bf810e34331db84f9f11930e83b8813b5ad31ba1 # v1.16.4
         with:
           setup: none
           cli-version: ${{ inputs.cli_version }}
@@ -334,8 +334,8 @@ jobs:
             --cache-import-status ok \
             --sccache-stats-file /tmp/deno-rolling-sccache-stats.txt \
             --require-sccache-evidence \
-            --cli-version "${{ inputs.cli_version || 'v1.16.3' }}" \
-            --action-sha b1d1e466317cde2d78a86f8cb94347deebb501e9
+            --cli-version "${{ inputs.cli_version || 'v1.16.4' }}" \
+            --action-sha bf810e34331db84f9f11930e83b8813b5ad31ba1
 
       - name: Upload rolling result
         uses: actions/upload-artifact@v6

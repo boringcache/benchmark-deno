@@ -12,7 +12,7 @@ BoringCache candidates:
 - a same-seed cohort that combines persistent `target/` with sccache on both
   sides and changes only archived-local versus eagerly warmed remote storage
 
-Stable proof runs pin `boringcache/one` `v1.16.3` by immutable commit and keep
+Stable proof runs pin `boringcache/one` `v1.16.4` by immutable commit and keep
 Rust installation in the host workflow. Canary runs require an exact immutable
 CLI tag.
 
@@ -161,10 +161,10 @@ The repository needs these Actions secrets:
 - `BORINGCACHE_RESTORE_TOKEN`
 - `BORINGCACHE_SAVE_TOKEN`
 
-Run **Deno release hybrid cache proof**, **Deno Linux debug cache proof**,
-either full-target proof, **Deno release sccache plus target cohort**, or
-**Deno Cargo product proof** from the Actions tab. The `cli_version` input pins
-an exact released CLI. Full-target proofs also
+Run **Deno Cargo product proof** from the Actions tab for the maintained product
+path. The release-hybrid, debug, full-target, and same-seed cohort choices remain
+explicit diagnostic controls. The `cli_version` input pins an exact released
+CLI. Full-target controls also
 require the completed source proof run ID whose seed and Actions result should
 be reused. Each proof publishes one comparison table and JSON artifact.
 
