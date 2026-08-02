@@ -27,6 +27,11 @@ on:
         required: false
         type: string
         default: ""
+      archive_tag_suffix:
+        description: Suffix on the already-published rolling archive tags.
+        required: false
+        type: string
+        default: ""
       base_sha:
         description: Commit represented by the published target; required by cargo-rolling-chain.
         required: false
@@ -94,6 +99,7 @@ jobs:
     with:
       cli_version: ${{ inputs.cli_version }}
       cache_scope: ${{ inputs.cache_scope }}
+      archive_tag_suffix: ${{ inputs.archive_tag_suffix }}
       base_sha: ${{ inputs.base_sha }}
       head_sha: ${{ inputs.head_sha }}
     secrets: inherit
