@@ -8,12 +8,12 @@ on:
         description: Exact BoringCache CLI release tag.
         required: false
         type: string
-        default: "v1.16.3"
+        default: "v1.16.4"
       experiment:
         description: Cache experiment to run.
         required: true
         type: choice
-        default: release-hybrid
+        default: cargo-product
         options:
           - release-hybrid
           - debug

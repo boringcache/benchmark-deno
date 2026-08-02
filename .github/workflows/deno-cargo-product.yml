@@ -14,7 +14,7 @@ on:
         description: Exact immutable BoringCache CLI release tag.
         required: true
         type: string
-        default: v1.16.3
+        default: v1.16.4
 
 permissions:
   actions: read

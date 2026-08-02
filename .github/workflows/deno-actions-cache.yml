@@ -14,7 +14,7 @@ on:
       cli_version:
         required: false
         type: string
-        default: v1.16.3
+        default: v1.16.4
 
 permissions:
   actions: write
@@ -167,7 +167,7 @@ jobs:
             --cache-components cargo-registry,target-directory \
             --cache-import-status cold \
             --cli-version "${{ inputs.cli_version }}" \
-            --action-sha b1d1e466317cde2d78a86f8cb94347deebb501e9
+            --action-sha bf810e34331db84f9f11930e83b8813b5ad31ba1
 
       - name: Upload base result
         uses: actions/upload-artifact@v6
@@ -284,7 +284,7 @@ jobs:
             --cache-components cargo-registry,target-directory \
             --cache-import-status hit \
             --cli-version "${{ inputs.cli_version }}" \
-            --action-sha b1d1e466317cde2d78a86f8cb94347deebb501e9
+            --action-sha bf810e34331db84f9f11930e83b8813b5ad31ba1
 
       - name: Upload rolling result
         uses: actions/upload-artifact@v6

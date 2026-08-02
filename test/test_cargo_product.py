@@ -34,7 +34,7 @@ class CargoProductWorkflowTest(unittest.TestCase):
         self.assertEqual(workflow.count("DENO_BORINGCACHE_CARGO_ACCESS: consume"), 1)
         self.assertIn("Build and publish through boringcache cargo", workflow)
         self.assertIn("Restore and build through boringcache cargo", workflow)
-        self.assertIn("default: v1.16.3", workflow)
+        self.assertIn("default: v1.16.4", workflow)
         self.assertIn("verify_boringcache_cargo.py", workflow)
         self.assertIn("native_tool_evidence.v1", workflow)
         self.assertNotIn("BORINGCACHE_ARCHIVE_GRAPH_WRITES", workflow)
@@ -43,6 +43,7 @@ class CargoProductWorkflowTest(unittest.TestCase):
         self.assertNotIn("uses: boringcache/one@", workflow)
         self.assertNotIn("boringcache save", workflow)
         self.assertNotIn("boringcache restore", workflow)
+        self.assertIn("default: cargo-product", dispatcher)
         self.assertIn("- cargo-product", dispatcher)
         self.assertIn("uses: ./.github/workflows/deno-cargo-product.yml", dispatcher)
 
