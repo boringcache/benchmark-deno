@@ -199,6 +199,7 @@ jobs:
           changed="$(sed -nE 's/.*restored: ([0-9,]+) unchanged, ([0-9,]+) changed\/new;.*/\2/p' /tmp/deno-chain-cli.log | tail -n 1 | tr -d ',')"
           fresh="$(jq -s '[.[] | select(.reason == "compiler-artifact" and .fresh == true)] | length' /tmp/deno-chain-cargo.jsonl)"
           rebuilt="$(jq -s '[.[] | select(.reason == "compiler-artifact" and .fresh == false)] | length' /tmp/deno-chain-cargo.jsonl)"
+          target_saves="$(grep -c '^Completed saving deno-cargo-target-' /tmp/deno-chain-cli.log || true)"
 
           mapfile -t native_evidence < <(find /tmp/deno-chain-native -type f -name '*.json' | sort)
           [[ "${#native_evidence[@]}" -gt 0 ]]
@@ -221,11 +222,13 @@ jobs:
           [[ "${unchanged:-0}" -gt 0 ]]
           [[ "${changed:-0}" -gt 0 ]]
           [[ "$fresh" -gt 0 ]]
+          [[ "$target_saves" -eq 1 ]]
           {
             echo "unchanged=${unchanged}"
             echo "changed=${changed}"
             echo "fresh=${fresh}"
             echo "rebuilt=${rebuilt}"
+            echo "target_saves=${target_saves}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Record target accumulation
@@ -307,6 +310,7 @@ jobs:
             echo "- End to end: ${{ steps.build.outputs.elapsed_seconds }}s"
             echo "- Source freshness: ${{ steps.proof.outputs.unchanged }} unchanged, ${{ steps.proof.outputs.changed }} changed/new"
             echo "- Cargo artifacts: ${{ steps.proof.outputs.fresh }} fresh, ${{ steps.proof.outputs.rebuilt }} rebuilt"
+            echo "- Target publications: ${{ steps.proof.outputs.target_saves }}"
             echo "- Target layout: ${{ steps.target_growth.outputs.layout }} (comparable=${{ steps.target_growth.outputs.comparable }})"
             echo "- Target stored bytes: ${{ steps.target_growth.outputs.stored_before }} → ${{ steps.target_growth.outputs.stored_after }} (delta ${{ steps.target_growth.outputs.stored_delta }})"
             echo "- Target uncompressed bytes: ${{ steps.target_growth.outputs.uncompressed_before }} → ${{ steps.target_growth.outputs.uncompressed_after }} (delta ${{ steps.target_growth.outputs.uncompressed_delta }})"
