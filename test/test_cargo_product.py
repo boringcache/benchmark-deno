@@ -184,6 +184,12 @@ class CargoProductWorkflowTest(unittest.TestCase):
         self.assertIn("DENO_ROLLING_ARCHIVE_TAG_SUFFIX=", source)
         self.assertIn('cron: "*/30 * * * *"', sync)
         self.assertIn("advance-source-pair.sh benchmark-source.env DENO", sync)
+        self.assertIn("Require the previous rolling benchmark to be green", sync)
+        self.assertIn("steps.previous.outputs.ready == 'true'", sync)
+        self.assertIn(
+            "group: benchmark-deno-cargo-rolling-chain",
+            (ROOT / ".github/workflows/deno-cargo-rolling-chain.yml").read_text(),
+        )
 
 
 class CargoProductEvidenceTest(unittest.TestCase):
