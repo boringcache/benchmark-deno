@@ -24,6 +24,50 @@ def load_verifier():
 verify_boringcache_cargo = load_verifier()
 
 
+class SourceSyncTest(unittest.TestCase):
+    def test_advances_exactly_one_upstream_commit(self):
+        current = "a" * 40
+        following = "b" * 40
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "benchmark-source.env"
+            source.write_text(
+                "DENO_SOURCE_REPOSITORY=denoland/deno\n"
+                f"DENO_BASE_SHA={'0' * 40}\n"
+                f"DENO_HEAD_SHA={current}\n"
+                "DENO_RUST_VERSION=1.95.0\n"
+            )
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            gh = bin_dir / "gh"
+            gh.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$*\" in\n"
+                "  'api repos/denoland/deno --jq .default_branch') echo main ;;\n"
+                f"  'api repos/denoland/deno/compare/{current}...main') "
+                f"echo '{{\"status\":\"ahead\",\"commits\":[{{\"sha\":\"{following}\"}}]}}' ;;\n"
+                f"  'api repos/denoland/deno/commits/{following} --jq .parents[0].sha // empty') echo {current} ;;\n"
+                "  *) echo \"Unexpected gh call: $*\" >&2; exit 1 ;;\n"
+                "esac\n"
+            )
+            gh.chmod(0o755)
+
+            subprocess.run(
+                [
+                    str(ROOT / "scripts/advance-source-pair.sh"),
+                    str(source),
+                    "DENO",
+                ],
+                check=True,
+                env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+            )
+            settings = dict(line.split("=", 1) for line in source.read_text().splitlines())
+
+        self.assertEqual(settings["DENO_BASE_SHA"], current)
+        self.assertEqual(settings["DENO_HEAD_SHA"], following)
+        self.assertEqual(settings["DENO_RUST_VERSION"], "1.95.0")
+
+
 class CargoProductWorkflowTest(unittest.TestCase):
     def test_cargo_is_the_only_live_boringcache_rust_lifecycle(self):
         workflows = ROOT / ".github" / "workflows"
@@ -42,6 +86,7 @@ class CargoProductWorkflowTest(unittest.TestCase):
                 "deno-cargo-product.yml",
                 "deno-cargo-rolling-chain.yml",
                 "deno-rust-cache-proof.yml",
+                "sync.yml",
             },
         )
 
@@ -125,7 +170,20 @@ class CargoProductWorkflowTest(unittest.TestCase):
             ),
             2,
         )
-        self.assertIn("archive_tag_suffix: ${{ inputs.archive_tag_suffix }}", dispatcher)
+        self.assertIn("inputs.archive_tag_suffix", dispatcher)
+
+    def test_source_updates_run_the_persistent_rolling_chain(self):
+        dispatcher = (ROOT / ".github/workflows/deno-rust-cache-proof.yml").read_text()
+        sync = (ROOT / ".github/workflows/sync.yml").read_text()
+        source = (ROOT / "benchmark-source.env").read_text()
+
+        self.assertIn('- "benchmark-source.env"', dispatcher)
+        self.assertIn("github.event_name == 'push'", dispatcher)
+        self.assertIn("needs.source.outputs.cache_scope", dispatcher)
+        self.assertIn("DENO_ROLLING_CACHE_SCOPE=", source)
+        self.assertIn("DENO_ROLLING_ARCHIVE_TAG_SUFFIX=", source)
+        self.assertIn('cron: "*/30 * * * *"', sync)
+        self.assertIn("advance-source-pair.sh benchmark-source.env DENO", sync)
 
 
 class CargoProductEvidenceTest(unittest.TestCase):
