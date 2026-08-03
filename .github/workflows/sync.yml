@@ -17,6 +17,15 @@ jobs:
     name: Sync With Upstream
     runs-on: ubuntu-24.04
     steps:
+      - name: Accept the sync bot invitation
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN }}
+        run: |
+          invitation_id="$(gh api user/repository_invitations | jq -r --arg repo "$GITHUB_REPOSITORY" '.[] | select(.repository.full_name == $repo) | .id' | head -n 1)"
+          if [[ -n "$invitation_id" ]]; then
+            gh api --method PATCH "user/repository_invitations/${invitation_id}"
+          fi
+
       - name: Checkout benchmark repo
         uses: actions/checkout@v6
         with:
