@@ -1,0 +1,44 @@
+name: "Sync Upstream"
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: benchmark-deno-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync With Upstream
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout benchmark repo
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN }}
+
+      - name: Advance the adjacent source pair
+        id: source
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN }}
+        run: ./scripts/advance-source-pair.sh benchmark-source.env DENO
+
+      - name: Commit the upstream update
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- benchmark-source.env; then
+            echo "No upstream changes"
+            exit 0
+          fi
+
+          git config user.name "boringcache-bot"
+          git config user.email "boringcache-bot@users.noreply.github.com"
+          git add benchmark-source.env
+          git commit -m "Update upstream to ${{ steps.source.outputs.source_repository }}@${{ steps.source.outputs.source_short_sha }}"
+          git push origin HEAD:main
