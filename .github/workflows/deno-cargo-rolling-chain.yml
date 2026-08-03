@@ -155,7 +155,6 @@ jobs:
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-          DENO_USE_BORINGCACHE_CARGO: "1"
           DENO_BORINGCACHE_CARGO_ACCESS: publish
           DENO_BORINGCACHE_METADATA_PHASE: rolling-chain
           DENO_BORINGCACHE_NATIVE_EVIDENCE_DIR: /tmp/deno-chain-native

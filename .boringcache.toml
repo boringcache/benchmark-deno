@@ -1,10 +1,5 @@
 workspace = "boringcache/benchmark-deno"
 
-# Deno's existing target archive is the comparison baseline. The pure
-# BoringCache lane restores only Cargo state and remote compiler artifacts. The
-# explicitly labelled release-hybrid profile also preserves Deno's capped
-# ThinLTO cache without restoring the rest of target/.
-
 [entries.cargo-registry]
 tag = "deno-cargo-registry-local"
 
@@ -16,54 +11,8 @@ kind = "cargo-target"
 tag = "deno-cargo-target-local"
 path = "upstream/target"
 
-[entries.release-lto]
-tag = "deno-release-lto-cache-local"
-path = "upstream/target/release/lto-cache"
-
-# Mirrors the directory paths restored by Deno's Actions cache lane. The
-# promotion workflow starts from that exact archive, so registry source trees
-# and Git checkouts excluded by the source cache are not introduced here.
-[entries.actions-cargo-registry]
-tag = "deno-actions-cargo-registry-local"
-path = "~/.cargo/registry"
-
-[entries.actions-cargo-bin]
-tag = "deno-actions-cargo-bin-local"
-path = "~/.cargo/bin"
-
-[entries.actions-target]
-tag = "deno-actions-target-local"
-path = "upstream/target"
-
-[profiles.cargo]
-entries = ["cargo-registry"]
-
 [profiles.cargo-product]
 entries = ["cargo-registry", "cargo-git", "cargo-target"]
-
-[profiles.release-hybrid]
-entries = ["cargo-registry", "release-lto"]
-
-[profiles.full-target]
-entries = [
-  "actions-cargo-registry",
-  "actions-cargo-bin",
-  "actions-target",
-]
-
-[profiles.target-only]
-entries = ["actions-target"]
-
-# Adapter-only control used when another product owns the target archive. This
-# keeps BoringCache's sccache transport identical while changing only the
-# target materialization path.
-[profiles.sccache-only]
-entries = []
-
-[adapters.sccache]
-tag = "deno-rust-cache-local"
-command = ["./scripts/run-deno-build.sh"]
-no-git = true
 
 [adapters.cargo]
 tag = "deno-rust-cache-local"

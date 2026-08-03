@@ -1,5 +1,5 @@
 name: "Deno Cargo product proof"
-run-name: Deno Cargo product | ${{ inputs.cli_version }}
+run-name: Deno Cargo fresh | ${{ inputs.cli_version }}
 
 on:
   workflow_call:
@@ -97,7 +97,6 @@ jobs:
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-          DENO_USE_BORINGCACHE_CARGO: "1"
           DENO_BORINGCACHE_CARGO_ACCESS: publish
           DENO_BORINGCACHE_METADATA_PHASE: base
           DENO_BORINGCACHE_NATIVE_EVIDENCE_DIR: /tmp/deno-base-native
@@ -232,7 +231,6 @@ jobs:
         id: build
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
-          DENO_USE_BORINGCACHE_CARGO: "1"
           DENO_BORINGCACHE_CARGO_ACCESS: consume
           DENO_BORINGCACHE_METADATA_PHASE: head
           DENO_BORINGCACHE_NATIVE_EVIDENCE_DIR: /tmp/deno-head-native
