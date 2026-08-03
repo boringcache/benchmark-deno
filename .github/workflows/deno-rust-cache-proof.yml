@@ -1,25 +1,20 @@
-name: "Deno Rust cache proof"
-run-name: ${{ inputs.cli_version == '' && format('Deno {0} cache proof', inputs.experiment) || format('Deno {0} cache proof | CLI {1}', inputs.experiment, inputs.cli_version) }}
+name: "Deno Cargo benchmark"
+run-name: ${{ format('Deno {0} | CLI {1}', inputs.experiment, inputs.cli_version) }}
 
 on:
   workflow_dispatch:
     inputs:
       cli_version:
-        description: Exact BoringCache CLI release tag.
-        required: false
+        description: Exact immutable BoringCache CLI release tag.
+        required: true
         type: string
-        default: "v1.16.4"
+        default: v1.16.4
       experiment:
-        description: Cache experiment to run.
+        description: Cargo product workflow to run.
         required: true
         type: choice
         default: cargo-product
         options:
-          - release-hybrid
-          - debug
-          - release-sccache
-          - release-full-target
-          - debug-full-target
           - cargo-product
           - cargo-rolling-chain
       cache_scope:
@@ -28,7 +23,7 @@ on:
         type: string
         default: ""
       archive_tag_suffix:
-        description: Suffix on the already-published rolling archive tags.
+        description: Suffix on an already-published Cargo archive tag.
         required: false
         type: string
         default: ""
@@ -44,46 +39,10 @@ on:
         default: ""
 
 permissions:
-  actions: write
+  actions: read
   contents: read
 
 jobs:
-  actions-cache:
-    name: Actions cache baseline
-    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-product' && inputs.experiment != 'cargo-rolling-chain' }}
-    uses: ./.github/workflows/deno-actions-cache.yml
-    with:
-      benchmark_id: ${{ inputs.experiment == 'debug' && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
-      build_profile: ${{ inputs.experiment == 'debug' && 'debug' || 'release' }}
-      cli_version: ${{ inputs.cli_version }}
-    secrets: inherit
-
-  boringcache:
-    name: BoringCache candidate
-    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-product' && inputs.experiment != 'cargo-rolling-chain' }}
-    uses: ./.github/workflows/deno-boringcache.yml
-    with:
-      benchmark_id: ${{ inputs.experiment == 'debug' && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
-      build_profile: ${{ inputs.experiment == 'debug' && 'debug' || 'release' }}
-      strategy: ${{ inputs.experiment == 'release-hybrid' && 'boringcache-hybrid' || 'boringcache' }}
-      cache_profile: ${{ inputs.experiment == 'release-hybrid' && 'release-hybrid' || 'cargo' }}
-      cache_mode: ${{ inputs.experiment == 'release-hybrid' && 'sccache-plus-lto-archive' || 'sccache' }}
-      cache_components: ${{ inputs.experiment == 'release-hybrid' && 'cargo-registry,remote-sccache,release-thinlto-archive' || 'cargo-registry,remote-sccache' }}
-      cli_version: ${{ inputs.cli_version }}
-    secrets: inherit
-
-  boringcache-full-target:
-    name: BoringCache full target plus sccache
-    if: ${{ endsWith(inputs.experiment, '-full-target') }}
-    uses: ./.github/workflows/deno-boringcache-full-target.yml
-    with:
-      benchmark_id: ${{ startsWith(inputs.experiment, 'debug-') && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
-      build_profile: ${{ startsWith(inputs.experiment, 'debug-') && 'debug' || 'release' }}
-      source_run_id: ${{ startsWith(inputs.experiment, 'debug-') && '30333410651' || '30333408848' }}
-      source_run_attempt: "1"
-      cli_version: ${{ inputs.cli_version }}
-    secrets: inherit
-
   cargo-product:
     name: BoringCache Cargo product proof
     if: ${{ inputs.experiment == 'cargo-product' }}
@@ -103,42 +62,3 @@ jobs:
       base_sha: ${{ inputs.base_sha }}
       head_sha: ${{ inputs.head_sha }}
     secrets: inherit
-
-  compare:
-    name: Compare results
-    if: ${{ !endsWith(inputs.experiment, '-full-target') && inputs.experiment != 'cargo-product' && inputs.experiment != 'cargo-rolling-chain' }}
-    needs: [actions-cache, boringcache]
-    runs-on: ubuntu-24.04
-    env:
-      BENCHMARK_ID: ${{ inputs.experiment == 'debug' && 'deno-debug-rust-cache' || 'deno-release-rust-cache' }}
-      CANDIDATE_STRATEGY: ${{ inputs.experiment == 'release-hybrid' && 'boringcache-hybrid' || 'boringcache' }}
-      COMPARISON_TITLE: ${{ inputs.experiment == 'debug' && 'Deno Linux debug cache proof' || (inputs.experiment == 'release-hybrid' && 'Deno release hybrid cache proof' || 'Deno release Rust cache proof') }}
-    steps:
-      - name: Checkout benchmark repository
-        uses: actions/checkout@v6
-
-      - name: Download phase results
-        uses: actions/download-artifact@v8
-        with:
-          pattern: phase-${{ env.BENCHMARK_ID }}-*
-          path: benchmark-phases
-          merge-multiple: true
-
-      - name: Render comparison
-        run: |
-          ./scripts/render_comparison.py \
-            --input-dir benchmark-phases \
-            --output-dir benchmark-results \
-            --benchmark "$BENCHMARK_ID" \
-            --candidate-strategy "$CANDIDATE_STRATEGY" \
-            --title "$COMPARISON_TITLE"
-
-      - name: Publish job summary
-        run: cat benchmark-results/comparison.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload comparison
-        uses: actions/upload-artifact@v6
-        with:
-          name: benchmark-${{ env.BENCHMARK_ID }}-comparison
-          path: benchmark-results
-          if-no-files-found: error

@@ -25,11 +25,35 @@ verify_boringcache_cargo = load_verifier()
 
 
 class CargoProductWorkflowTest(unittest.TestCase):
+    def test_cargo_is_the_only_live_boringcache_rust_lifecycle(self):
+        workflows = ROOT / ".github" / "workflows"
+        workflow_text = "\n".join(
+            path.read_text() for path in sorted(workflows.glob("*.yml"))
+        )
+        config = (ROOT / ".boringcache.toml").read_text()
+
+        self.assertIn("[adapters.cargo]", config)
+        self.assertNotIn("[adapters.sccache]", config)
+        self.assertNotIn("mode: sccache", workflow_text)
+        self.assertNotIn("uses: boringcache/one@", workflow_text)
+        self.assertEqual(
+            {path.name for path in workflows.glob("*.yml")},
+            {
+                "deno-cargo-product.yml",
+                "deno-cargo-rolling-chain.yml",
+                "deno-rust-cache-proof.yml",
+            },
+        )
+
     def test_uses_one_released_cli_owned_lifecycle(self):
         workflow = (ROOT / ".github/workflows/deno-cargo-product.yml").read_text()
         dispatcher = (ROOT / ".github/workflows/deno-rust-cache-proof.yml").read_text()
 
-        self.assertIn('DENO_USE_BORINGCACHE_CARGO: "1"', workflow)
+        runner = (ROOT / "scripts/run-cargo-build.sh").read_text()
+        self.assertIn("command=(boringcache cargo --fail-on-cache-error)", runner)
+        self.assertNotIn("command=(cargo build)", runner)
+        self.assertNotIn("DENO_USE_BORINGCACHE_CARGO", runner)
+        self.assertNotIn("DENO_USE_BORINGCACHE_CARGO", workflow)
         self.assertEqual(workflow.count("DENO_BORINGCACHE_CARGO_ACCESS: publish"), 1)
         self.assertEqual(workflow.count("DENO_BORINGCACHE_CARGO_ACCESS: consume"), 1)
         self.assertIn("Build and publish through boringcache cargo", workflow)
@@ -46,6 +70,9 @@ class CargoProductWorkflowTest(unittest.TestCase):
         self.assertIn("default: cargo-product", dispatcher)
         self.assertIn("- cargo-product", dispatcher)
         self.assertIn("uses: ./.github/workflows/deno-cargo-product.yml", dispatcher)
+        self.assertNotIn("actions-cache", dispatcher)
+        self.assertNotIn("full-target", dispatcher)
+        self.assertNotIn("release-hybrid", dispatcher)
 
     def test_each_cargo_invocation_uses_the_normal_product_lifecycle(self):
         release_build = (ROOT / "scripts/run-deno-release-build.sh").read_text()
@@ -68,7 +95,6 @@ class CargoProductWorkflowTest(unittest.TestCase):
                     **os.environ,
                     "PATH": f"{bin_dir}:{os.environ['PATH']}",
                     "BORINGCACHE_ARGS_LOG": str(args_log),
-                    "DENO_USE_BORINGCACHE_CARGO": "1",
                     "DENO_BORINGCACHE_CARGO_ACCESS": access,
                 }
                 subprocess.run(
