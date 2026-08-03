@@ -54,6 +54,10 @@ permissions:
   actions: read
   contents: read
 
+concurrency:
+  group: benchmark-deno-cargo-rolling-chain
+  cancel-in-progress: false
+
 env:
   BENCHMARK_WORKSPACE: boringcache/benchmark-deno
   DENO_BENCHMARK_PROFILE: release
