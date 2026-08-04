@@ -178,6 +178,7 @@ jobs:
               .phases.restore.mode == "cargo" and
               .phases.restore.mode_evidence.command_executed == true and
               .phases.restore.mode_evidence.native_tool.tool == "sccache" and
+              (.phases.restore.mode_evidence.native_tool.cache_errors // 0) == 0 and
               (.phases.restore.mode_evidence.native_tool.cache_read_errors // 0) == 0 and
               (.phases.restore.mode_evidence.native_tool.cache_write_errors // 0) == 0 and
               (.phases.restore.mode_evidence.native_tool.cache_timeouts // 0) == 0
@@ -381,6 +382,7 @@ jobs:
               .phases.restore.mode_evidence.command_executed == true and
               .phases.restore.mode_evidence.target_cache_hit == true and
               .phases.restore.mode_evidence.native_tool.tool == "sccache" and
+              (.phases.restore.mode_evidence.native_tool.cache_errors // 0) == 0 and
               (.phases.restore.mode_evidence.native_tool.cache_read_errors // 0) == 0 and
               (.phases.restore.mode_evidence.native_tool.cache_timeouts // 0) == 0
             )
