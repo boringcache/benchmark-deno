@@ -121,7 +121,7 @@ jobs:
 
       - name: Resolve the published base through BoringCache One
         id: base_action
-        uses: boringcache/one@180cfcf2eb46a627db0615a60f2f79f139f49f0e # one-canary-1554e12b8850
+        uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
         with:
           trust-policy: restore
           setup: none
@@ -162,7 +162,7 @@ jobs:
 
       - name: Restore, build, and publish the adjacent head through BoringCache One
         id: build
-        uses: boringcache/one@180cfcf2eb46a627db0615a60f2f79f139f49f0e # one-canary-1554e12b8850
+        uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
         with:
           trust-policy: publish
           setup: none
@@ -299,7 +299,7 @@ jobs:
           {
             echo "## Deno Cargo rolling cadence"
             echo
-            echo "- Action: \`boringcache/one@180cfcf2eb46a627db0615a60f2f79f139f49f0e\`"
+            echo "- Action: \`boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2\`"
             echo "- Source: \`${{ inputs.base_sha }}\` → \`${{ inputs.head_sha }}\`"
             echo "- Cargo lifecycle: ${{ steps.proof.outputs.elapsed_seconds }}s"
             echo "- sccache: ${{ steps.proof.outputs.compile_requests }} requests, ${{ steps.proof.outputs.cache_hits }} hits, ${{ steps.proof.outputs.cache_misses }} misses"
