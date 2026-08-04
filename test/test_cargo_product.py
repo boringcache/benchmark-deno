@@ -165,7 +165,7 @@ class CargoProductWorkflowTest(unittest.TestCase):
         self.assertNotIn("DENO_BORINGCACHE_SKIP_", workflow)
         self.assertNotIn("run-deno-mtime-cache.js", workflow)
         self.assertNotIn("install-boringcache-cli.sh", workflow)
-        self.assertNotIn("install-sccache.sh", workflow)
+        self.assertEqual(workflow.count("install-sccache.sh 0.16.0"), 2)
         self.assertNotIn("inputs.cli_version", workflow)
         self.assertNotIn("fail-on-cache-miss", workflow)
         self.assertNotIn("boringcache save", workflow)
@@ -190,6 +190,7 @@ class CargoProductWorkflowTest(unittest.TestCase):
         self.assertEqual(workflow.count("uses: boringcache/one@"), 3)
         self.assertNotIn("inputs.cli_version", workflow)
         self.assertNotIn("install-boringcache-cli.sh", workflow)
+        self.assertEqual(workflow.count("install-sccache.sh 0.16.0"), 1)
         self.assertNotIn("fresh_compiler_artifacts", workflow)
         self.assertNotIn("restored_unchanged_sources", workflow)
         self.assertEqual(
