@@ -13,8 +13,9 @@ requires the native tool to be present before invoking the CLI lifecycle.
 Deno's two release Cargo commands remain two commands; combining them changes
 Cargo feature unification and would make the benchmark a different workload.
 
-Each source update creates a fresh adjacent base/head cohort, so a release
-recipe change cannot silently reuse an older target identity. The persistent
-rolling lane remains available as a manually selected storage/correctness probe.
-Every build first checks the pinned Deno checkout against the generated release
-job and stops on recipe or Rust toolchain drift.
+Each source update advances the persistent rolling chain by one adjacent commit:
+the published base is restored, the upstream release workload builds the head,
+and that head becomes the next seed. A fresh adjacent base/head product proof is
+an explicit re-seed operation for Action or release-recipe changes, not the
+normal upstream cadence. Every build first checks the pinned Deno checkout
+against the generated release job and stops on recipe or Rust toolchain drift.
