@@ -52,14 +52,21 @@ concurrency:
 env:
   BENCHMARK_WORKSPACE: boringcache/benchmark-deno
   BORINGCACHE_ARCHIVE_GRAPH_WRITES: "1"
-  DENO_BENCHMARK_PROFILE: release
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+  RUST_LIB_BACKTRACE: 0
 
 jobs:
   advance:
     name: Restore published base and promote adjacent head
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
     steps:
+      - name: Configure git
+        run: |
+          git config --global core.symlinks true
+          git config --global fetch.parallel 32
+
       - name: Validate BoringCache secrets
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
@@ -69,19 +76,19 @@ jobs:
           [[ -n "$BORINGCACHE_SAVE_TOKEN" ]] || { echo "Missing BoringCache save token" >&2; exit 1; }
 
       - name: Checkout benchmark repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Read pinned toolchain
         id: source
         run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
 
       - name: Checkout adjacent Deno head
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
           ref: ${{ inputs.head_sha }}
           path: upstream
-          fetch-depth: 2
+          fetch-depth: 5
           submodules: false
 
       - name: Require one-commit source cadence
@@ -92,24 +99,42 @@ jobs:
           git -C upstream clean -fdx
           test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
 
+      - name: Clone submodule ./tests/util/std
+        run: git -C upstream submodule update --init --recursive --depth=1 -- ./tests/util/std
+
+      - name: Verify Deno Linux release recipe
+        run: ./scripts/verify-deno-release-recipe.py upstream
+
       - name: Install Deno snapshot minifier runtime
         uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
         with:
           deno-version: v2.x
 
-      - name: Install the pinned Rust toolchain
-        run: |
-          rustup toolchain install "${{ steps.source.outputs.DENO_RUST_VERSION }}" --profile minimal
-          rustup default "${{ steps.source.outputs.DENO_RUST_VERSION }}"
+      - name: Pre-install rustup 1.28.2 (workaround broken 1.29.0)
+        run: ./scripts/preinstall-deno-rustup.sh
 
-      - name: Free runner disk space
-        run: ./scripts/free-runner-disk.sh
+      - name: Expose Deno's pinned toolchain file
+        run: ln -s upstream/rust-toolchain.toml rust-toolchain.toml
+
+      - uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621
+
+      - name: Log versions
+        run: |
+          echo '*** Python'
+          command -v python && python --version || echo 'No python found or bad executable'
+          echo '*** Rust'
+          command -v rustc && rustc --version || echo 'No rustc found or bad executable'
+          echo '*** Cargo'
+          command -v cargo && cargo --version || echo 'No cargo found or bad executable'
+          echo '*** Deno'
+          command -v deno && deno --version || echo 'No deno found or bad executable'
+          echo '*** Node'
+          command -v node && node --version || echo 'No node found or bad executable'
+          echo '*** Installed packages'
+          command -v dpkg && dpkg -l || echo 'No dpkg found or bad executable'
 
       - name: Configure Deno Linux build environment
         run: ./scripts/setup-deno-linux.sh
-
-      - name: Install exact sccache
-        run: ./scripts/install-sccache.sh 0.16.0
 
       - name: Scope the persistent Cargo product chain
         run: |
@@ -160,8 +185,17 @@ jobs:
           jq -e '.results[] | select(.status == "hit" and .kv_entry_count > 0)' \
             /tmp/deno-chain-sccache-check.json
 
-      - name: Restore, build, and publish the adjacent head through BoringCache One
-        id: build
+      - name: Configure canary build
+        run: echo "DENO_CANARY=true" >> "$GITHUB_ENV"
+
+      - name: Configure frame-pointer panic traces
+        run: ./scripts/configure-deno-frame-pointers.sh
+
+      - name: Report disk before release build
+        run: df -h
+
+      - name: Restore and build Deno release binaries through boringcache cargo
+        id: build_primary
         uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
         with:
           trust-policy: publish
@@ -169,13 +203,32 @@ jobs:
           mode: cargo
           working-directory: upstream
           fail-on-cache-error: true
-          metadata-hints: phase=rolling-chain
+          metadata-hints: phase=rolling-chain-primary
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-          CARGO_INCREMENTAL: "0"
-          DENO_CANARY: "true"
           DENO_SNAPSHOT_MINIFY_SOURCES: "1"
+
+      - name: Select Deno's denort_desktop release command
+        run: ./scripts/select-deno-cargo-phase.py desktop
+
+      - name: Build denort_desktop through boringcache cargo
+        id: build_desktop
+        uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
+        with:
+          trust-policy: publish
+          setup: none
+          mode: cargo
+          working-directory: upstream
+          fail-on-cache-error: true
+          metadata-hints: phase=rolling-chain-desktop
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
+          DENO_SNAPSHOT_MINIFY_SOURCES: "1"
+
+      - name: Report disk after release build
+        run: df -h
 
       - name: Verify Cargo correctness, cache health, and head promotion
         id: proof
@@ -187,21 +240,26 @@ jobs:
           test -s upstream/target/.boringcache/cargo-freshness-v2.json
           test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
 
-          action_evidence="${{ steps.build.outputs.evidence-path }}"
-          test -s "$action_evidence"
-          cp "$action_evidence" /tmp/deno-chain-action.json
-          jq -e '
-            .schema_version == "boringcache_one_evidence.v1" and
-            .phases.restore.phase_status == "completed" and
-            .phases.restore.mode == "cargo" and
-            .phases.restore.cache_hit == true and
-            .phases.restore.mode_evidence.command_executed == true and
-            .phases.restore.mode_evidence.target_cache_hit == true and
-            .phases.restore.mode_evidence.native_tool.tool == "sccache" and
-            (.phases.restore.mode_evidence.native_tool.cache_read_errors // 0) == 0 and
-            (.phases.restore.mode_evidence.native_tool.cache_write_errors // 0) == 0 and
-            (.phases.restore.mode_evidence.native_tool.cache_timeouts // 0) == 0
-          ' "$action_evidence"
+          primary_evidence="${{ steps.build_primary.outputs.evidence-path }}"
+          desktop_evidence="${{ steps.build_desktop.outputs.evidence-path }}"
+          test -s "$primary_evidence"
+          test -s "$desktop_evidence"
+          cp "$primary_evidence" /tmp/deno-chain-primary-action.json
+          cp "$desktop_evidence" /tmp/deno-chain-desktop-action.json
+          jq -se '
+            all(.[];
+              .schema_version == "boringcache_one_evidence.v1" and
+              .phases.restore.phase_status == "completed" and
+              .phases.restore.mode == "cargo" and
+              .phases.restore.cache_hit == true and
+              .phases.restore.mode_evidence.command_executed == true and
+              .phases.restore.mode_evidence.target_cache_hit == true and
+              .phases.restore.mode_evidence.native_tool.tool == "sccache" and
+              (.phases.restore.mode_evidence.native_tool.cache_read_errors // 0) == 0 and
+              (.phases.restore.mode_evidence.native_tool.cache_write_errors // 0) == 0 and
+              (.phases.restore.mode_evidence.native_tool.cache_timeouts // 0) == 0
+            )
+          ' "$primary_evidence" "$desktop_evidence"
 
           target_tag_raw="deno-cargo-target-${{ inputs.cache_scope }}${{ inputs.archive_tag_suffix }}"
           boringcache check "$BENCHMARK_WORKSPACE" "$target_tag_raw" --no-git --json \
@@ -213,10 +271,10 @@ jobs:
             /tmp/deno-chain-head-inspect.json
           test "$(jq -r '.entry.id' /tmp/deno-chain-head-inspect.json)" != "${{ steps.base.outputs.entry_id }}"
 
-          elapsed_seconds="$(jq -r '.phases.restore.mode_evidence.elapsed_seconds' "$action_evidence")"
-          compile_requests="$(jq -r '.phases.restore.mode_evidence.native_tool.compile_requests // 0' "$action_evidence")"
-          cache_hits="$(jq -r '.phases.restore.mode_evidence.native_tool.cache_hits // 0' "$action_evidence")"
-          cache_misses="$(jq -r '.phases.restore.mode_evidence.native_tool.cache_misses // 0' "$action_evidence")"
+          elapsed_seconds="$(jq -s 'map(.phases.restore.mode_evidence.elapsed_seconds) | add' "$primary_evidence" "$desktop_evidence")"
+          compile_requests="$(jq -s 'map(.phases.restore.mode_evidence.native_tool.compile_requests // 0) | add' "$primary_evidence" "$desktop_evidence")"
+          cache_hits="$(jq -s 'map(.phases.restore.mode_evidence.native_tool.cache_hits // 0) | add' "$primary_evidence" "$desktop_evidence")"
+          cache_misses="$(jq -s 'map(.phases.restore.mode_evidence.native_tool.cache_misses // 0) | add' "$primary_evidence" "$desktop_evidence")"
 
           {
             echo "elapsed_seconds=${elapsed_seconds}"

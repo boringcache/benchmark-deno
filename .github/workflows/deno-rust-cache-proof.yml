@@ -1,5 +1,5 @@
 name: "Deno Cargo benchmark"
-run-name: ${{ format('Deno {0}', inputs.experiment || 'cargo-rolling-chain') }}
+run-name: ${{ format('Deno {0}', inputs.experiment || 'cargo-product') }}
 
 on:
   push:
@@ -9,11 +9,6 @@ on:
       - "benchmark-source.env"
   workflow_dispatch:
     inputs:
-      cli_version:
-        description: Exact immutable BoringCache CLI release tag.
-        required: true
-        type: string
-        default: v1.16.4
       experiment:
         description: Cargo product workflow to run.
         required: true
@@ -67,20 +62,18 @@ jobs:
   cargo-product:
     name: BoringCache Cargo product proof
     needs: source
-    if: ${{ inputs.experiment == 'cargo-product' }}
+    if: ${{ github.event_name == 'push' || inputs.experiment == 'cargo-product' }}
     uses: ./.github/workflows/deno-cargo-product.yml
-    with:
-      cli_version: ${{ inputs.cli_version }}
     secrets: inherit
 
   cargo-rolling-chain:
     name: BoringCache Cargo rolling chain
     needs: source
-    if: ${{ github.event_name == 'push' || inputs.experiment == 'cargo-rolling-chain' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.experiment == 'cargo-rolling-chain' }}
     uses: ./.github/workflows/deno-cargo-rolling-chain.yml
     with:
-      cache_scope: ${{ github.event_name == 'push' && needs.source.outputs.cache_scope || inputs.cache_scope }}
-      archive_tag_suffix: ${{ github.event_name == 'push' && needs.source.outputs.archive_tag_suffix || inputs.archive_tag_suffix }}
-      base_sha: ${{ github.event_name == 'push' && needs.source.outputs.base_sha || inputs.base_sha }}
-      head_sha: ${{ github.event_name == 'push' && needs.source.outputs.head_sha || inputs.head_sha }}
+      cache_scope: ${{ inputs.cache_scope }}
+      archive_tag_suffix: ${{ inputs.archive_tag_suffix }}
+      base_sha: ${{ inputs.base_sha }}
+      head_sha: ${{ inputs.head_sha }}
     secrets: inherit

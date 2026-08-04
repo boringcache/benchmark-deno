@@ -20,10 +20,13 @@ profiles = ["cargo-product"]
 no-git = true
 metadata-hints = ["benchmark=deno", "lane=cargo-product"]
 command = [
-  "cargo", "build", "--release", "--locked",
+  "cargo", "build", "-Zbuild-std=core,alloc,std,proc_macro,panic_abort",
+  "--release", "--locked",
   "-p", "deno",
   "-p", "denort",
   "-p", "test_server",
-  "-p", "denort_desktop",
-  "--features=deno/panic-trace",
+  "--bin", "deno",
+  "--bin", "denort",
+  "--bin", "test_server",
+  "--features=deno/panic-trace-frame-pointer",
 ]

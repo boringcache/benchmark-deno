@@ -23,7 +23,7 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN }}
 
-      - name: Require the previous rolling benchmark to be green
+      - name: Require the previous fresh product cohort to be green
         id: previous
         env:
           GH_TOKEN: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN }}
@@ -39,7 +39,7 @@ jobs:
             --json status,conclusion,url)"
 
           if [[ "$(jq length <<<"$run_json")" -eq 0 ]]; then
-            echo "No rolling benchmark found for source commit ${source_commit}" >&2
+            echo "No fresh product cohort found for source commit ${source_commit}" >&2
             exit 1
           fi
 
@@ -52,7 +52,7 @@ jobs:
             exit 0
           fi
           if [[ "$conclusion" != "success" ]]; then
-            echo "Previous rolling benchmark did not succeed: ${url}" >&2
+            echo "Previous fresh product cohort did not succeed: ${url}" >&2
             exit 1
           fi
 
