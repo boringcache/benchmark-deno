@@ -77,9 +77,11 @@ class CargoProductWorkflowTest(unittest.TestCase):
         config = (ROOT / ".boringcache.toml").read_text()
 
         self.assertIn("[adapters.cargo]", config)
+        self.assertIn('command = [', config)
+        self.assertIn('"cargo", "build"', config)
         self.assertNotIn("[adapters.sccache]", config)
         self.assertNotIn("mode: sccache", workflow_text)
-        self.assertNotIn("uses: boringcache/one@", workflow_text)
+        self.assertEqual(workflow_text.count("uses: boringcache/one@"), 2)
         self.assertEqual(
             {path.name for path in workflows.glob("*.yml")},
             {
@@ -164,6 +166,15 @@ class CargoProductWorkflowTest(unittest.TestCase):
 
         self.assertIn("archive_tag_suffix:", workflow)
         self.assertIn('"${{ inputs.archive_tag_suffix }}"', workflow)
+        self.assertIn('BORINGCACHE_ARCHIVE_GRAPH_WRITES: "1"', workflow)
+        self.assertIn('.entry.cas_layout == "archive-chunks-v1"', workflow)
+        self.assertIn('.entry.blob_count > 1', workflow)
+        self.assertEqual(workflow.count("mode: cargo"), 2)
+        self.assertEqual(workflow.count("uses: boringcache/one@"), 2)
+        self.assertNotIn("inputs.cli_version", workflow)
+        self.assertNotIn("install-boringcache-cli.sh", workflow)
+        self.assertNotIn("fresh_compiler_artifacts", workflow)
+        self.assertNotIn("restored_unchanged_sources", workflow)
         self.assertEqual(
             workflow.count(
                 "deno-cargo-target-${{ inputs.cache_scope }}${{ inputs.archive_tag_suffix }}"
