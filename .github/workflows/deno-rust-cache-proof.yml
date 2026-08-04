@@ -1,5 +1,5 @@
 name: "Deno Cargo benchmark"
-run-name: ${{ format('Deno {0} | CLI {1}', inputs.experiment || 'cargo-rolling-chain', inputs.cli_version || 'v1.16.4') }}
+run-name: ${{ format('Deno {0}', inputs.experiment || 'cargo-rolling-chain') }}
 
 on:
   push:
@@ -79,7 +79,6 @@ jobs:
     if: ${{ github.event_name == 'push' || inputs.experiment == 'cargo-rolling-chain' }}
     uses: ./.github/workflows/deno-cargo-rolling-chain.yml
     with:
-      cli_version: ${{ inputs.cli_version || 'v1.16.4' }}
       cache_scope: ${{ github.event_name == 'push' && needs.source.outputs.cache_scope || inputs.cache_scope }}
       archive_tag_suffix: ${{ github.event_name == 'push' && needs.source.outputs.archive_tag_suffix || inputs.archive_tag_suffix }}
       base_sha: ${{ github.event_name == 'push' && needs.source.outputs.base_sha || inputs.base_sha }}

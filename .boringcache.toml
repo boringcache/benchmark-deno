@@ -19,3 +19,11 @@ tag = "deno-rust-cache-local"
 profiles = ["cargo-product"]
 no-git = true
 metadata-hints = ["benchmark=deno", "lane=cargo-product"]
+command = [
+  "cargo", "build", "--release", "--locked",
+  "-p", "deno",
+  "-p", "denort",
+  "-p", "test_server",
+  "-p", "denort_desktop",
+  "--features=deno/panic-trace",
+]
