@@ -369,6 +369,9 @@ jobs:
           test -s "$desktop_evidence"
           cp "$primary_evidence" /tmp/deno-head-primary-action.json
           cp "$desktop_evidence" /tmp/deno-head-desktop-action.json
+          # In sccache READ_ONLY mode, misses are compiled but their suppressed
+          # publications are reported in the native cache-write-errors counter.
+          # Restore health is therefore the target hit plus read and timeout health.
           jq -se '
             all(.[];
               .schema_version == "boringcache_one_evidence.v1" and
@@ -379,7 +382,6 @@ jobs:
               .phases.restore.mode_evidence.target_cache_hit == true and
               .phases.restore.mode_evidence.native_tool.tool == "sccache" and
               (.phases.restore.mode_evidence.native_tool.cache_read_errors // 0) == 0 and
-              (.phases.restore.mode_evidence.native_tool.cache_write_errors // 0) == 0 and
               (.phases.restore.mode_evidence.native_tool.cache_timeouts // 0) == 0
             )
           ' "$primary_evidence" "$desktop_evidence"
