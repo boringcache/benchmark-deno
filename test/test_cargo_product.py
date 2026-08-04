@@ -210,7 +210,14 @@ class CargoProductWorkflowTest(unittest.TestCase):
         sync = (ROOT / ".github/workflows/sync.yml").read_text()
         source = (ROOT / "benchmark-source.env").read_text()
 
-        self.assertIn('- "benchmark-source.env"', dispatcher)
+        for path in (
+            ".boringcache.toml",
+            ".github/workflows/deno-cargo-product.yml",
+            ".github/workflows/deno-rust-cache-proof.yml",
+            "benchmark-source.env",
+            "scripts/**",
+        ):
+            self.assertIn(f'- "{path}"', dispatcher)
         self.assertIn(
             "github.event_name == 'push' || inputs.experiment == 'cargo-product'",
             dispatcher,
@@ -224,6 +231,8 @@ class CargoProductWorkflowTest(unittest.TestCase):
         self.assertIn('cron: "*/30 * * * *"', sync)
         self.assertIn("advance-source-pair.sh benchmark-source.env DENO", sync)
         self.assertIn("Require the previous fresh product cohort to be green", sync)
+        self.assertIn('benchmark_commit="$(git log', sync)
+        self.assertIn('--commit "$benchmark_commit"', sync)
         self.assertIn("steps.previous.outputs.ready == 'true'", sync)
         self.assertIn(
             "group: benchmark-deno-cargo-rolling-chain",

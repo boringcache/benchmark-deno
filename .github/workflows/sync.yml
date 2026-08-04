@@ -29,17 +29,22 @@ jobs:
           GH_TOKEN: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          source_commit="$(git log -1 --format=%H -- benchmark-source.env)"
+          benchmark_commit="$(git log -1 --format=%H -- \
+            .boringcache.toml \
+            .github/workflows/deno-cargo-product.yml \
+            .github/workflows/deno-rust-cache-proof.yml \
+            benchmark-source.env \
+            scripts)"
           run_json="$(gh run list \
             --repo "$GITHUB_REPOSITORY" \
             --workflow deno-rust-cache-proof.yml \
             --event push \
-            --commit "$source_commit" \
+            --commit "$benchmark_commit" \
             --limit 1 \
             --json status,conclusion,url)"
 
           if [[ "$(jq length <<<"$run_json")" -eq 0 ]]; then
-            echo "No fresh product cohort found for source commit ${source_commit}" >&2
+            echo "No fresh product cohort found for benchmark commit ${benchmark_commit}" >&2
             exit 1
           fi
 

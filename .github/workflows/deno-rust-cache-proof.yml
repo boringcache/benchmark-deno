@@ -6,7 +6,11 @@ on:
     branches:
       - main
     paths:
+      - ".boringcache.toml"
+      - ".github/workflows/deno-cargo-product.yml"
+      - ".github/workflows/deno-rust-cache-proof.yml"
       - "benchmark-source.env"
+      - "scripts/**"
   workflow_dispatch:
     inputs:
       experiment:
