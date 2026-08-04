@@ -136,6 +136,9 @@ jobs:
       - name: Configure Deno Linux build environment
         run: ./scripts/setup-deno-linux.sh
 
+      - name: Install exact sccache
+        run: ./scripts/install-sccache.sh 0.16.0
+
       - name: Scope the persistent Cargo product chain
         run: |
           ./scripts/scope-boringcache-run.sh \
