@@ -23,28 +23,23 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN }}
 
-      - name: Require the previous fresh product cohort to be green
+      - name: Require the previous rolling benchmark to be green
         id: previous
         env:
           GH_TOKEN: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          benchmark_commit="$(git log -1 --format=%H -- \
-            .boringcache.toml \
-            .github/workflows/deno-cargo-product.yml \
-            .github/workflows/deno-rust-cache-proof.yml \
-            benchmark-source.env \
-            scripts)"
+          source_commit="$(git log -1 --format=%H -- benchmark-source.env)"
           run_json="$(gh run list \
             --repo "$GITHUB_REPOSITORY" \
             --workflow deno-rust-cache-proof.yml \
             --event push \
-            --commit "$benchmark_commit" \
+            --commit "$source_commit" \
             --limit 1 \
             --json status,conclusion,url)"
 
           if [[ "$(jq length <<<"$run_json")" -eq 0 ]]; then
-            echo "No fresh product cohort found for benchmark commit ${benchmark_commit}" >&2
+            echo "No rolling benchmark found for source commit ${source_commit}" >&2
             exit 1
           fi
 
@@ -57,7 +52,7 @@ jobs:
             exit 0
           fi
           if [[ "$conclusion" != "success" ]]; then
-            echo "Previous fresh product cohort did not succeed: ${url}" >&2
+            echo "Previous rolling benchmark did not succeed: ${url}" >&2
             exit 1
           fi
 

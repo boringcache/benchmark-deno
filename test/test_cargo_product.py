@@ -205,34 +205,39 @@ class CargoProductWorkflowTest(unittest.TestCase):
         )
         self.assertIn("inputs.archive_tag_suffix", dispatcher)
 
-    def test_source_updates_run_a_fresh_product_cohort(self):
+    def test_source_updates_advance_the_persistent_rolling_chain(self):
         dispatcher = (ROOT / ".github/workflows/deno-rust-cache-proof.yml").read_text()
         sync = (ROOT / ".github/workflows/sync.yml").read_text()
         source = (ROOT / "benchmark-source.env").read_text()
 
-        for path in (
-            ".boringcache.toml",
-            ".github/workflows/deno-cargo-product.yml",
-            ".github/workflows/deno-rust-cache-proof.yml",
-            "benchmark-source.env",
-            "scripts/**",
-        ):
-            self.assertIn(f'- "{path}"', dispatcher)
+        self.assertEqual(dispatcher.count('- "benchmark-source.env"'), 1)
+        self.assertNotIn('- ".boringcache.toml"', dispatcher)
+        self.assertNotIn('- ".github/workflows/deno-cargo-product.yml"', dispatcher)
+        self.assertNotIn('- "scripts/**"', dispatcher)
         self.assertIn(
-            "github.event_name == 'push' || inputs.experiment == 'cargo-product'",
+            "github.event_name == 'workflow_dispatch' && inputs.experiment == 'cargo-product'",
             dispatcher,
         )
         self.assertIn(
-            "github.event_name == 'workflow_dispatch' && inputs.experiment == 'cargo-rolling-chain'",
+            "github.event_name == 'push' || inputs.experiment == 'cargo-rolling-chain'",
             dispatcher,
         )
-        self.assertIn("DENO_ROLLING_CACHE_SCOPE=", source)
-        self.assertIn("DENO_ROLLING_ARCHIVE_TAG_SUFFIX=", source)
+        for output in ("cache_scope", "archive_tag_suffix", "base_sha", "head_sha"):
+            self.assertIn(
+                f"github.event_name == 'push' && needs.source.outputs.{output} || inputs.{output}",
+                dispatcher,
+            )
+        settings = dict(line.split("=", 1) for line in source.splitlines())
+        self.assertRegex(settings["DENO_ROLLING_CACHE_SCOPE"], r"^r\d+-a\d+$")
+        self.assertEqual(settings["DENO_ROLLING_ARCHIVE_TAG_SUFFIX"], "")
         self.assertIn('cron: "*/30 * * * *"', sync)
         self.assertIn("advance-source-pair.sh benchmark-source.env DENO", sync)
-        self.assertIn("Require the previous fresh product cohort to be green", sync)
-        self.assertIn('benchmark_commit="$(git log', sync)
-        self.assertIn('--commit "$benchmark_commit"', sync)
+        self.assertIn("Require the previous rolling benchmark to be green", sync)
+        self.assertIn(
+            'source_commit="$(git log -1 --format=%H -- benchmark-source.env)"',
+            sync,
+        )
+        self.assertIn('--commit "$source_commit"', sync)
         self.assertIn("steps.previous.outputs.ready == 'true'", sync)
         self.assertIn(
             "group: benchmark-deno-cargo-rolling-chain",

@@ -1,16 +1,12 @@
 name: "Deno Cargo benchmark"
-run-name: ${{ format('Deno {0}', inputs.experiment || 'cargo-product') }}
+run-name: ${{ format('Deno {0}', inputs.experiment || 'cargo-rolling-chain') }}
 
 on:
   push:
     branches:
       - main
     paths:
-      - ".boringcache.toml"
-      - ".github/workflows/deno-cargo-product.yml"
-      - ".github/workflows/deno-rust-cache-proof.yml"
       - "benchmark-source.env"
-      - "scripts/**"
   workflow_dispatch:
     inputs:
       experiment:
@@ -66,18 +62,18 @@ jobs:
   cargo-product:
     name: BoringCache Cargo product proof
     needs: source
-    if: ${{ github.event_name == 'push' || inputs.experiment == 'cargo-product' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.experiment == 'cargo-product' }}
     uses: ./.github/workflows/deno-cargo-product.yml
     secrets: inherit
 
   cargo-rolling-chain:
     name: BoringCache Cargo rolling chain
     needs: source
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.experiment == 'cargo-rolling-chain' }}
+    if: ${{ github.event_name == 'push' || inputs.experiment == 'cargo-rolling-chain' }}
     uses: ./.github/workflows/deno-cargo-rolling-chain.yml
     with:
-      cache_scope: ${{ inputs.cache_scope }}
-      archive_tag_suffix: ${{ inputs.archive_tag_suffix }}
-      base_sha: ${{ inputs.base_sha }}
-      head_sha: ${{ inputs.head_sha }}
+      cache_scope: ${{ github.event_name == 'push' && needs.source.outputs.cache_scope || inputs.cache_scope }}
+      archive_tag_suffix: ${{ github.event_name == 'push' && needs.source.outputs.archive_tag_suffix || inputs.archive_tag_suffix }}
+      base_sha: ${{ github.event_name == 'push' && needs.source.outputs.base_sha || inputs.base_sha }}
+      head_sha: ${{ github.event_name == 'push' && needs.source.outputs.head_sha || inputs.head_sha }}
     secrets: inherit

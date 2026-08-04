@@ -54,6 +54,9 @@ def read_settings(path: Path) -> dict[str, str]:
         if "=" not in line:
             raise RecipeMismatch(f"Invalid setting at {path}:{number}: {raw_line}")
         key, raw_value = line.split("=", 1)
+        if not raw_value:
+            settings[key] = ""
+            continue
         values = shlex.split(raw_value)
         if len(values) != 1:
             raise RecipeMismatch(f"Expected one value for {key} at {path}:{number}")
