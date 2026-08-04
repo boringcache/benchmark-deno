@@ -155,6 +155,10 @@ class CargoProductWorkflowTest(unittest.TestCase):
         self.assertEqual(workflow.count("trust-policy: restore"), 2)
         self.assertEqual(workflow.count("target_cache_hit == false"), 1)
         self.assertEqual(workflow.count("target_cache_hit == true"), 2)
+        self.assertEqual(workflow.count("cache_read_errors // 0) == 0"), 2)
+        self.assertEqual(workflow.count("cache_write_errors // 0) == 0"), 1)
+        self.assertEqual(workflow.count("cache_timeouts // 0) == 0"), 2)
+        self.assertIn("In sccache READ_ONLY mode", workflow)
         self.assertIn("Build Deno release binaries through boringcache cargo", workflow)
         self.assertIn(
             "Restore and build Deno release binaries through boringcache cargo",
