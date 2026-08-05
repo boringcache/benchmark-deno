@@ -1,5 +1,5 @@
 name: "Deno Cargo product run"
-run-name: ${{ format('Deno Cargo fresh | CLI {0}', inputs.cli_version || 'v1.16.5') }}
+run-name: ${{ format('Deno Cargo fresh | CLI {0}', inputs.cli_version || 'Action default') }}
 
 on:
   workflow_call:
@@ -8,14 +8,14 @@ on:
         description: Exact immutable BoringCache CLI release tag.
         required: false
         type: string
-        default: v1.16.5
+        default: ""
   workflow_dispatch:
     inputs:
       cli_version:
         description: Exact immutable BoringCache CLI release tag.
         required: false
         type: string
-        default: v1.16.5
+        default: ""
 
 permissions:
   actions: read
@@ -118,7 +118,7 @@ jobs:
         id: build_primary
         uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
         with:
-          cli-version: ${{ inputs.cli_version || 'v1.16.5' }}
+          cli-version: ${{ inputs.cli_version }}
           trust-policy: publish
           setup: none
           mode: cargo
@@ -137,7 +137,7 @@ jobs:
         id: build_desktop
         uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
         with:
-          cli-version: ${{ inputs.cli_version || 'v1.16.5' }}
+          cli-version: ${{ inputs.cli_version }}
           trust-policy: publish
           setup: none
           mode: cargo
@@ -260,7 +260,7 @@ jobs:
         id: build_primary
         uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
         with:
-          cli-version: ${{ inputs.cli_version || 'v1.16.5' }}
+          cli-version: ${{ inputs.cli_version }}
           trust-policy: restore
           setup: none
           mode: cargo
@@ -278,7 +278,7 @@ jobs:
         id: build_desktop
         uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
         with:
-          cli-version: ${{ inputs.cli_version || 'v1.16.5' }}
+          cli-version: ${{ inputs.cli_version }}
           trust-policy: restore
           setup: none
           mode: cargo
@@ -308,7 +308,7 @@ jobs:
           {
             echo "## Deno Cargo product run"
             echo
-            echo "- CLI: \`${{ inputs.cli_version || 'v1.16.5' }}\`"
+            echo "- CLI override: \`${{ inputs.cli_version || 'Action default' }}\`"
             echo "- Source: \`${{ needs.publish-base.outputs.base_sha }}\` → \`${{ needs.publish-base.outputs.head_sha }}\`"
             echo "- Primary target available before the adjacent build: \`${{ steps.build_primary.outputs.cache-hit }}\`"
             echo "- Desktop target available before the adjacent build: \`${{ steps.build_desktop.outputs.cache-hit }}\`"

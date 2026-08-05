@@ -13,7 +13,7 @@ on:
         description: Exact immutable BoringCache CLI release tag.
         required: false
         type: string
-        default: v1.16.5
+        default: ""
       experiment:
         description: Cargo product workflow to run.
         required: true
@@ -73,7 +73,7 @@ jobs:
     if: ${{ github.event_name == 'push' || inputs.experiment == 'cargo-rolling-chain' }}
     uses: ./.github/workflows/deno-cargo-rolling-chain.yml
     with:
-      cli_version: ${{ inputs.cli_version || 'v1.16.5' }}
+      cli_version: ${{ inputs.cli_version }}
       cache_scope: ${{ github.event_name == 'push' && needs.source.outputs.cache_scope || inputs.cache_scope }}
       base_sha: ${{ github.event_name == 'push' && needs.source.outputs.base_sha || inputs.base_sha }}
       head_sha: ${{ github.event_name == 'push' && needs.source.outputs.head_sha || inputs.head_sha }}
