@@ -1,26 +1,10 @@
 name: "Deno Cargo rolling run"
-run-name: Deno Cargo rolling ${{ inputs.base_sha }} to ${{ inputs.head_sha }}
+run-name: ${{ github.event_name == 'push' && 'Deno Cargo rolling pinned source update' || format('Deno Cargo rolling {0} to {1}', inputs.base_sha, inputs.head_sha) }}
 
 on:
-  workflow_call:
-    inputs:
-      cli_version:
-        description: Exact immutable BoringCache CLI release tag.
-        required: false
-        type: string
-        default: ""
-      cache_scope:
-        description: Existing rolling scope whose target was published from base_sha.
-        required: true
-        type: string
-      base_sha:
-        description: Source commit currently represented by the published target.
-        required: true
-        type: string
-      head_sha:
-        description: Immediate child commit to build and publish as the next seed.
-        required: true
-        type: string
+  push:
+    branches: [main]
+    paths: ["benchmark-source.env"]
   workflow_dispatch:
     inputs:
       cli_version:
@@ -40,6 +24,11 @@ on:
         description: Immediate child commit to build and publish as the next seed.
         required: true
         type: string
+      runner_label:
+        description: Optional runner label for a manual main-branch experiment.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   actions: read
@@ -55,10 +44,29 @@ env:
   RUST_LIB_BACKTRACE: 0
 
 jobs:
-  advance:
-    name: Restore base and publish adjacent head
+  source:
+    name: Resolve Deno source
     runs-on: ubuntu-24.04
+    outputs:
+      base_sha: ${{ steps.source.outputs.DENO_BASE_SHA }}
+      head_sha: ${{ steps.source.outputs.DENO_HEAD_SHA }}
+      cache_scope: ${{ steps.source.outputs.DENO_ROLLING_CACHE_SCOPE }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read pinned source
+        id: source
+        run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
+
+  advance:
+    name: BoringCache Deno Cargo commit
+    needs: source
+    if: inputs.runner_label == '' || github.ref_name == 'main'
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-24.04' }}
     timeout-minutes: 240
+    env:
+      RESOLVED_BASE_SHA: ${{ github.event_name == 'push' && needs.source.outputs.base_sha || inputs.base_sha }}
+      RESOLVED_HEAD_SHA: ${{ github.event_name == 'push' && needs.source.outputs.head_sha || inputs.head_sha }}
+      RESOLVED_CACHE_SCOPE: ${{ github.event_name == 'push' && needs.source.outputs.cache_scope || inputs.cache_scope }}
     steps:
       - name: Configure git
         run: |
@@ -76,7 +84,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
-          ref: ${{ inputs.head_sha }}
+          ref: ${{ env.RESOLVED_HEAD_SHA }}
           path: upstream
           fetch-depth: 5
           submodules: false
@@ -84,8 +92,8 @@ jobs:
       - name: Require one-commit source cadence
         run: |
           set -euo pipefail
-          test "$(git -C upstream rev-parse HEAD)" = "${{ inputs.head_sha }}"
-          test "$(git -C upstream rev-parse HEAD^)" = "${{ inputs.base_sha }}"
+          test "$(git -C upstream rev-parse HEAD)" = "$RESOLVED_HEAD_SHA"
+          test "$(git -C upstream rev-parse HEAD^)" = "$RESOLVED_BASE_SHA"
           git -C upstream clean -fdx
           test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
 
@@ -125,7 +133,7 @@ jobs:
         run: ./scripts/setup-deno-linux.sh
 
       - name: Scope the persistent Cargo product chain
-        run: ./scripts/scope-boringcache-run.sh "${{ inputs.cache_scope }}"
+        run: ./scripts/scope-boringcache-run.sh "$RESOLVED_CACHE_SCOPE"
 
       - name: Configure canary build
         run: echo "DENO_CANARY=true" >> "$GITHUB_ENV"
@@ -194,7 +202,7 @@ jobs:
             echo "## Deno Cargo rolling run"
             echo
             echo "- CLI: \`${{ inputs.cli_version }}\`"
-            echo "- Source: \`${{ inputs.base_sha }}\` → \`${{ inputs.head_sha }}\`"
+            echo "- Source: \`${RESOLVED_BASE_SHA}\` → \`${RESOLVED_HEAD_SHA}\`"
             echo "- Primary target available before the adjacent build: \`${{ steps.build_primary.outputs.cache-hit }}\`"
             echo "- Desktop target available before the adjacent build: \`${{ steps.build_desktop.outputs.cache-hit }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -202,6 +210,6 @@ jobs:
       - name: Retain product evidence
         uses: actions/upload-artifact@v6
         with:
-          name: deno-cargo-rolling-${{ inputs.head_sha }}
+          name: deno-cargo-rolling-${{ env.RESOLVED_HEAD_SHA }}
           path: /tmp/deno-chain-*-action.json
           if-no-files-found: error

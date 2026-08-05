@@ -2,13 +2,6 @@ name: "Deno Cargo product run"
 run-name: ${{ format('Deno Cargo fresh | CLI {0}', inputs.cli_version || 'Action default') }}
 
 on:
-  workflow_call:
-    inputs:
-      cli_version:
-        description: Exact immutable BoringCache CLI release tag.
-        required: false
-        type: string
-        default: ""
   workflow_dispatch:
     inputs:
       cli_version:
@@ -16,6 +9,16 @@ on:
         required: false
         type: string
         default: ""
+      runner_label:
+        description: Optional runner label for a manual main-branch experiment.
+        required: false
+        type: string
+        default: ""
+  pull_request:
+    paths:
+      - ".github/workflows/deno-cargo-product.yml"
+      - "benchmark-source.env"
+      - "scripts/**"
 
 permissions:
   actions: read
@@ -29,8 +32,9 @@ env:
 
 jobs:
   publish-base:
-    name: Publish adjacent base through BoringCache One
-    runs-on: ubuntu-24.04
+    name: BoringCache Deno Cargo cold
+    if: inputs.runner_label == '' || github.ref_name == 'main'
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-24.04' }}
     timeout-minutes: 240
     outputs:
       base_sha: ${{ steps.source.outputs.DENO_BASE_SHA }}
@@ -171,9 +175,9 @@ jobs:
           if-no-files-found: error
 
   consume-head:
-    name: Restore adjacent head through BoringCache One
+    name: BoringCache Deno Cargo warm
     needs: publish-base
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-24.04' }}
     timeout-minutes: 240
     steps:
       - name: Configure git
