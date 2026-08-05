@@ -9,6 +9,11 @@ on:
       - "benchmark-source.env"
   workflow_dispatch:
     inputs:
+      cli_version:
+        description: Exact immutable BoringCache CLI release tag.
+        required: false
+        type: string
+        default: v1.16.5
       experiment:
         description: Cargo product workflow to run.
         required: true
@@ -19,11 +24,6 @@ on:
           - cargo-rolling-chain
       cache_scope:
         description: Existing Cargo rolling scope; required by cargo-rolling-chain.
-        required: false
-        type: string
-        default: ""
-      archive_tag_suffix:
-        description: Suffix on an already-published Cargo archive tag.
         required: false
         type: string
         default: ""
@@ -50,7 +50,6 @@ jobs:
       base_sha: ${{ steps.source.outputs.DENO_BASE_SHA }}
       head_sha: ${{ steps.source.outputs.DENO_HEAD_SHA }}
       cache_scope: ${{ steps.source.outputs.DENO_ROLLING_CACHE_SCOPE }}
-      archive_tag_suffix: ${{ steps.source.outputs.DENO_ROLLING_ARCHIVE_TAG_SUFFIX }}
     steps:
       - name: Checkout benchmark repository
         uses: actions/checkout@v6
@@ -60,10 +59,12 @@ jobs:
         run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
 
   cargo-product:
-    name: BoringCache Cargo product proof
+    name: BoringCache Cargo product
     needs: source
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.experiment == 'cargo-product' }}
     uses: ./.github/workflows/deno-cargo-product.yml
+    with:
+      cli_version: ${{ inputs.cli_version }}
     secrets: inherit
 
   cargo-rolling-chain:
@@ -72,8 +73,8 @@ jobs:
     if: ${{ github.event_name == 'push' || inputs.experiment == 'cargo-rolling-chain' }}
     uses: ./.github/workflows/deno-cargo-rolling-chain.yml
     with:
+      cli_version: ${{ inputs.cli_version || 'v1.16.5' }}
       cache_scope: ${{ github.event_name == 'push' && needs.source.outputs.cache_scope || inputs.cache_scope }}
-      archive_tag_suffix: ${{ github.event_name == 'push' && needs.source.outputs.archive_tag_suffix || inputs.archive_tag_suffix }}
       base_sha: ${{ github.event_name == 'push' && needs.source.outputs.base_sha || inputs.base_sha }}
       head_sha: ${{ github.event_name == 'push' && needs.source.outputs.head_sha || inputs.head_sha }}
     secrets: inherit
