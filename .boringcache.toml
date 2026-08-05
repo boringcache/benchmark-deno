@@ -3,16 +3,13 @@ workspace = "boringcache/benchmark-deno"
 [entries.cargo-registry]
 tag = "deno-cargo-registry-local"
 
-[entries.cargo-git]
-tag = "deno-cargo-git-local"
-
 [entries.cargo-target]
 kind = "cargo-target"
 tag = "deno-cargo-target-local"
 path = "upstream/target"
 
 [profiles.cargo-product]
-entries = ["cargo-registry", "cargo-git", "cargo-target"]
+entries = ["cargo-registry", "cargo-target"]
 
 [adapters.cargo]
 tag = "deno-rust-cache-local"
