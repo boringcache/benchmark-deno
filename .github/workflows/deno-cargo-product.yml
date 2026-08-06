@@ -133,6 +133,16 @@ jobs:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
           DENO_SNAPSHOT_MINIFY_SOURCES: "1"
+          SCCACHE_LOG: sccache=debug
+          SCCACHE_ERROR_LOG: /tmp/sccache-diag.log
+
+      - name: Upload sccache diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sccache-diagnostic-primary
+          path: /tmp/sccache-diag.log
+          if-no-files-found: warn
 
       - name: Select Deno's denort_desktop release command
         run: ./scripts/select-deno-cargo-phase.py desktop
