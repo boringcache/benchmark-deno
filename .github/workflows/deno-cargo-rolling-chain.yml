@@ -191,7 +191,7 @@ jobs:
           test -x upstream/target/release/deno
           test -x upstream/target/release/denort
           test -x upstream/target/release/test_server
-          test -x upstream/target/release/denort_desktop
+          test -s upstream/target/release/libdenort.so
           test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
           cp "${{ steps.build_primary.outputs.evidence-path }}" /tmp/deno-chain-primary-action.json
           cp "${{ steps.build_desktop.outputs.evidence-path }}" /tmp/deno-chain-desktop-action.json
