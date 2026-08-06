@@ -65,7 +65,7 @@ jobs:
           ref_slug="${ref_slug#-}"
           ref_slug="${ref_slug%-}"
           ref_slug="${ref_slug:-main}"
-          echo "cache_scope=deno-cargo-rolling-${ref_slug}" >> "$GITHUB_OUTPUT"
+          echo "cache_scope=rolling-${ref_slug}" >> "$GITHUB_OUTPUT"
 
   advance:
     name: BoringCache Deno Cargo commit
