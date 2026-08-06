@@ -68,6 +68,10 @@ jobs:
       RESOLVED_HEAD_SHA: ${{ github.event_name == 'push' && needs.source.outputs.head_sha || inputs.head_sha }}
       RESOLVED_CACHE_SCOPE: ${{ github.event_name == 'push' && needs.source.outputs.cache_scope || inputs.cache_scope }}
     steps:
+      - name: Start the workflow timer
+        id: workflow_timer
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+      
       - name: Configure git
         run: |
           git config --global core.symlinks true
@@ -147,6 +151,10 @@ jobs:
       - name: Report disk before release build
         run: df -h
 
+      - name: Start the build timer
+        id: build_timer
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+      
       - name: Build Deno release binaries through the Cargo product
         id: build_primary
         uses: boringcache/one@b372edd91cda127cb03c64967df35c3836d47f2a # v1.17.0
@@ -182,6 +190,12 @@ jobs:
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
           DENO_SNAPSHOT_MINIFY_SOURCES: "1"
 
+      - name: Capture the build timing
+        id: build_timing
+        env:
+          BUILD_STARTED_AT: ${{ steps.build_timer.outputs.started_at }}
+        run: echo "build_seconds=$(( $(date +%s) - BUILD_STARTED_AT ))" >> "$GITHUB_OUTPUT"
+      
       - name: Report disk after release build
         run: df -h
 
@@ -196,6 +210,47 @@ jobs:
           cp "${{ steps.build_primary.outputs.evidence-path }}" /tmp/deno-chain-primary-action.json
           cp "${{ steps.build_desktop.outputs.evidence-path }}" /tmp/deno-chain-desktop-action.json
 
+      - name: Write the benchmark phase evidence
+        env:
+          WORKFLOW_STARTED_AT: ${{ steps.workflow_timer.outputs.started_at }}
+          BUILD_SECONDS: ${{ steps.build_timing.outputs.build_seconds }}
+          CACHE_HIT: ${{ steps.build_primary.outputs.cache-hit }}
+          CACHE_TAG: ${{ steps.build_primary.outputs.cache-tag }}
+          CACHE_WORKSPACE: ${{ steps.build_primary.outputs.workspace }}
+          EVIDENCE_PATH: ${{ steps.build_primary.outputs.evidence-path }}
+          SOURCE_SHA: ${{ env.RESOLVED_HEAD_SHA }}
+        run: |
+          set -euo pipefail
+          source_url="$(git config -f .gitmodules submodule.upstream.url)"
+          python3 ./scripts/benchmark-report.py phase \
+            --benchmark deno-cargo \
+            --strategy boringcache \
+            --lane rolling \
+            --phase commit \
+            --mode cargo \
+            --build-seconds "$BUILD_SECONDS" \
+            --workflow-seconds "$(( $(date +%s) - WORKFLOW_STARTED_AT ))" \
+            --cache-hit "$CACHE_HIT" \
+            --cache-tag "$CACHE_TAG" \
+            --workspace "$CACHE_WORKSPACE" \
+            --source-repository "$(printf '%s' "${source_url#https://github.com/}" | sed 's/\.git$//')" \
+            --source-sha "$SOURCE_SHA" \
+            --evidence "$EVIDENCE_PATH"
+      
+      - name: Publish the Deno Cargo rolling benchmark report
+        run: |
+          python3 ./scripts/benchmark-report.py summarize \
+            --title "Deno Cargo rolling benchmark" \
+            --input-dir benchmark-results \
+            --output-dir benchmark-results
+      
+      - name: Retain the Deno Cargo rolling result
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-deno-cargo-boringcache-rolling
+          path: benchmark-results/deno-cargo-boringcache-rolling.json
+          if-no-files-found: error
+      
       - name: Publish rolling run summary
         run: |
           {
