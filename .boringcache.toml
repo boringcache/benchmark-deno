@@ -1,19 +1,28 @@
 workspace = "boringcache/benchmark-deno"
 
+# The root plan owns the persistent rolling chain. The release comparison uses
+# separate committed plans under plans/ so the compiler cache and Cargo target
+# can be judged independently without rewriting this file in a workflow.
+
 [entries.cargo-registry]
-tag = "deno-cargo-registry-local"
+tag = "deno-cargo-registry-rolling-main"
 
 [entries.cargo-target]
 kind = "cargo-target"
-tag = "deno-cargo-target-local"
+tag = "deno-cargo-target-rolling-main"
 path = "upstream/target"
 
 [profiles.cargo-product]
 entries = ["cargo-registry", "cargo-target"]
 
+[adapters.sccache]
+tag = "deno-rust-cache-rolling-main"
+no-git = true
+metadata-hints = ["benchmark=deno", "lane=rolling", "layer=compiler"]
+
 [adapters.cargo]
-tag = "deno-rust-cache-local"
 profiles = ["cargo-product"]
+compiler-cache = "sccache"
 no-git = true
 metadata-hints = ["benchmark=deno", "lane=cargo-product"]
 command = [
