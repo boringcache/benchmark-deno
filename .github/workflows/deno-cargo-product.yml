@@ -1,11 +1,11 @@
-name: "Deno Cargo product run"
-run-name: ${{ format('Deno Cargo fresh | CLI {0}', inputs.cli_version || 'Action default') }}
+name: "Deno Cargo layer proof"
+run-name: ${{ format('Deno Cargo layers | CLI {0}', inputs.cli_version || 'Action default') }}
 
 on:
   workflow_dispatch:
     inputs:
       cli_version:
-        description: Exact immutable BoringCache CLI release tag.
+        description: Optional exact immutable BoringCache CLI release tag.
         required: false
         type: string
         default: ""
@@ -16,29 +16,52 @@ on:
         default: ""
   pull_request:
     paths:
+      - ".boringcache.toml"
       - ".github/workflows/deno-cargo-product.yml"
       - "benchmark-source.env"
+      - "plans/**"
       - "scripts/**"
+      - "test/**"
 
 permissions:
   actions: read
   contents: read
 
+concurrency:
+  group: benchmark-deno-cargo-layer-proof
+  cancel-in-progress: false
+
 env:
-  CACHE_SCOPE: r${{ github.run_id }}-a${{ github.run_attempt }}
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
   RUST_LIB_BACKTRACE: 0
 
 jobs:
-  publish-base:
-    name: BoringCache Deno Cargo cold
-    if: inputs.runner_label == '' || github.ref_name == 'main'
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-24.04' }}
-    timeout-minutes: 240
+  source:
+    name: Resolve adjacent Deno source
+    runs-on: ubuntu-24.04
     outputs:
-      base_sha: ${{ steps.source.outputs.DENO_BASE_SHA }}
-      head_sha: ${{ steps.source.outputs.DENO_HEAD_SHA }}
+      base_sha: ${{ steps.source.outputs.base_sha }}
+      head_sha: ${{ steps.source.outputs.head_sha }}
+      source_repository: ${{ steps.source.outputs.source_repository }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read the reviewed source pair
+        id: source
+        run: |
+          set -euo pipefail
+          source benchmark-source.env
+          echo "base_sha=$DENO_BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$DENO_HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "source_repository=$DENO_SOURCE_REPOSITORY" >> "$GITHUB_OUTPUT"
+
+  cold:
+    name: "Cold: target + sccache seed"
+    needs: source
+    if: inputs.runner_label == '' || github.ref_name == 'main'
+    runs-on: ${{ inputs.runner_label || 'ubuntu-24.04' }}
+    timeout-minutes: 240
     steps:
       - name: Configure git
         run: |
@@ -48,20 +71,16 @@ jobs:
       - name: Checkout benchmark repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
-      - name: Read pinned source
-        id: source
-        run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
-
-      - name: Checkout pinned Deno base
+      - name: Checkout the Deno seed
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
-          ref: ${{ steps.source.outputs.DENO_BASE_SHA }}
+          repository: ${{ needs.source.outputs.source_repository }}
+          ref: ${{ needs.source.outputs.base_sha }}
           path: upstream
-          fetch-depth: 5
+          fetch-depth: 2
           submodules: false
 
-      - name: Prepare base source
+      - name: Prepare the seed source
         run: ./scripts/prepare-source.sh base
 
       - name: Clone submodule ./tests/util/std
@@ -83,26 +102,8 @@ jobs:
 
       - uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621
 
-      - name: Log versions
-        run: |
-          echo '*** Python'
-          command -v python && python --version || echo 'No python found or bad executable'
-          echo '*** Rust'
-          command -v rustc && rustc --version || echo 'No rustc found or bad executable'
-          echo '*** Cargo'
-          command -v cargo && cargo --version || echo 'No cargo found or bad executable'
-          echo '*** Deno'
-          command -v deno && deno --version || echo 'No deno found or bad executable'
-          echo '*** Node'
-          command -v node && node --version || echo 'No node found or bad executable'
-          echo '*** Installed packages'
-          command -v dpkg && dpkg -l || echo 'No dpkg found or bad executable'
-
       - name: Configure Deno Linux build environment
         run: ./scripts/setup-deno-linux.sh
-
-      - name: Scope the fresh Cargo product cohort
-        run: ./scripts/scope-boringcache-run.sh "$CACHE_SCOPE"
 
       - name: Configure canary build
         run: echo "DENO_CANARY=true" >> "$GITHUB_ENV"
@@ -110,75 +111,86 @@ jobs:
       - name: Configure frame-pointer panic traces
         run: ./scripts/configure-deno-frame-pointers.sh
 
-      - name: Require a clean product starting point
+      - name: Require an empty target
         run: |
           test ! -e upstream/target
           test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
 
-      - name: Report disk before release build
-        run: df -h
+      - name: Start lane timing
+        id: timer
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Build Deno release binaries through boringcache cargo
-        id: build_primary
+      - name: Select the cold primary CLI plan
+        run: ./scripts/activate-cargo-plan.sh cold primary
+
+      - name: Build the primary seed through the combined Cargo plan
+        id: primary
         uses: boringcache/one@ab52a39d3d7358c22b359a6ffbf86cf74be9bf56 # v1 / 1.18.1
         with:
           cli-version: ${{ inputs.cli_version }}
-          trust-policy: publish
           setup: none
           mode: cargo
+          trust-policy: publish
           working-directory: upstream
           fail-on-cache-error: true
-          metadata-hints: phase=fresh-base-primary
+          diagnostics: summary
+          metadata-hints: phase=layers-cold-primary
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
           DENO_SNAPSHOT_MINIFY_SOURCES: "1"
 
-      - name: Select Deno's denort_desktop release command
-        run: ./scripts/select-deno-cargo-phase.py desktop
+      - name: Select the cold desktop CLI plan
+        run: ./scripts/activate-cargo-plan.sh cold desktop
 
-      - name: Build denort_desktop through boringcache cargo
-        id: build_desktop
+      - name: Build denort_desktop through the combined Cargo plan
+        id: desktop
         uses: boringcache/one@ab52a39d3d7358c22b359a6ffbf86cf74be9bf56 # v1 / 1.18.1
         with:
           cli-version: ${{ inputs.cli_version }}
-          trust-policy: publish
           setup: none
           mode: cargo
+          trust-policy: publish
           working-directory: upstream
           fail-on-cache-error: true
-          metadata-hints: phase=fresh-base-desktop
+          diagnostics: summary
+          metadata-hints: phase=layers-cold-desktop
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
           DENO_SNAPSHOT_MINIFY_SOURCES: "1"
 
-      - name: Report disk after release build
-        run: df -h
-
-      - name: Verify the Deno base build
+      - name: Report cold-layer evidence
         run: |
-          set -euo pipefail
-          test -x upstream/target/release/deno
-          test -x upstream/target/release/denort
-          test -x upstream/target/release/test_server
-          test -s upstream/target/release/libdenort.so
-          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
-          cp "${{ steps.build_primary.outputs.evidence-path }}" /tmp/deno-base-primary-action.json
-          cp "${{ steps.build_desktop.outputs.evidence-path }}" /tmp/deno-base-desktop-action.json
+          jq -e '.phases.restore.mode_evidence.target_cache_hit == false' \
+            "${{ steps.primary.outputs.evidence-path }}"
+          echo "lane_seconds=$(( $(date +%s) - ${{ steps.timer.outputs.started_at }} ))" >> "$GITHUB_STEP_SUMMARY"
+          ./scripts/summarize-cargo-evidence.py \
+            cold-primary "${{ steps.primary.outputs.evidence-path }}" \
+            cold-desktop "${{ steps.desktop.outputs.evidence-path }}"
 
-      - name: Upload base evidence
+      - name: Retain cold product evidence
         uses: actions/upload-artifact@v6
         with:
-          name: deno-cargo-product-base
-          path: /tmp/deno-base-*.json
+          name: deno-cargo-layers-cold
+          path: |
+            ${{ steps.primary.outputs.evidence-path }}
+            ${{ steps.desktop.outputs.evidence-path }}
           if-no-files-found: error
 
-  consume-head:
-    name: BoringCache Deno Cargo warm
-    needs: publish-base
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-24.04' }}
+  warm:
+    name: "${{ matrix.label }}"
+    needs: [source, cold]
+    runs-on: ${{ inputs.runner_label || 'ubuntu-24.04' }}
     timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: sccache-only
+            label: "sccache only: target excluded"
+          - lane: combined
+            label: "Combined: target + sccache"
     steps:
       - name: Configure git
         run: |
@@ -188,23 +200,19 @@ jobs:
       - name: Checkout benchmark repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
-      - name: Read pinned source
-        id: source
-        run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
-
-      - name: Checkout pinned Deno head
+      - name: Checkout the adjacent Deno head
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
-          ref: ${{ needs.publish-base.outputs.head_sha }}
+          repository: ${{ needs.source.outputs.source_repository }}
+          ref: ${{ needs.source.outputs.head_sha }}
           path: upstream
-          fetch-depth: 5
+          fetch-depth: 2
           submodules: false
 
-      - name: Prepare adjacent head source
+      - name: Prepare the adjacent source
         run: |
           ./scripts/prepare-source.sh head
-          test "$(git -C upstream rev-parse HEAD^)" = "${{ needs.publish-base.outputs.base_sha }}"
+          test "$(git -C upstream rev-parse HEAD^)" = "${{ needs.source.outputs.base_sha }}"
 
       - name: Clone submodule ./tests/util/std
         run: git -C upstream submodule update --init --recursive --depth=1 -- ./tests/util/std
@@ -225,26 +233,8 @@ jobs:
 
       - uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621
 
-      - name: Log versions
-        run: |
-          echo '*** Python'
-          command -v python && python --version || echo 'No python found or bad executable'
-          echo '*** Rust'
-          command -v rustc && rustc --version || echo 'No rustc found or bad executable'
-          echo '*** Cargo'
-          command -v cargo && cargo --version || echo 'No cargo found or bad executable'
-          echo '*** Deno'
-          command -v deno && deno --version || echo 'No deno found or bad executable'
-          echo '*** Node'
-          command -v node && node --version || echo 'No node found or bad executable'
-          echo '*** Installed packages'
-          command -v dpkg && dpkg -l || echo 'No dpkg found or bad executable'
-
       - name: Configure Deno Linux build environment
         run: ./scripts/setup-deno-linux.sh
-
-      - name: Scope the base Cargo product cohort
-        run: ./scripts/scope-boringcache-run.sh "$CACHE_SCOPE"
 
       - name: Configure canary build
         run: echo "DENO_CANARY=true" >> "$GITHUB_ENV"
@@ -252,75 +242,117 @@ jobs:
       - name: Configure frame-pointer panic traces
         run: ./scripts/configure-deno-frame-pointers.sh
 
-      - name: Require an empty destination
+      - name: Require an empty target
         run: |
           test ! -e upstream/target
           test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
 
-      - name: Report disk before release build
-        run: df -h
+      - name: Start lane timing
+        id: timer
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Restore and build Deno release binaries through boringcache cargo
-        id: build_primary
+      - name: Select the primary CLI plan
+        run: ./scripts/activate-cargo-plan.sh "${{ matrix.lane }}" primary
+
+      - name: Build primary through the selected Cargo plan
+        id: primary
         uses: boringcache/one@ab52a39d3d7358c22b359a6ffbf86cf74be9bf56 # v1 / 1.18.1
         with:
           cli-version: ${{ inputs.cli_version }}
-          trust-policy: restore
           setup: none
           mode: cargo
+          trust-policy: restore
           working-directory: upstream
           fail-on-cache-error: true
-          metadata-hints: phase=fresh-head-primary
+          diagnostics: summary
+          metadata-hints: phase=layers-${{ matrix.lane }}-primary
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ""
           DENO_SNAPSHOT_MINIFY_SOURCES: "1"
 
-      - name: Select Deno's denort_desktop release command
-        run: ./scripts/select-deno-cargo-phase.py desktop
+      - name: Select the desktop CLI plan
+        run: ./scripts/activate-cargo-plan.sh "${{ matrix.lane }}" desktop
 
-      - name: Build denort_desktop through boringcache cargo
-        id: build_desktop
+      - name: Build denort_desktop through the selected Cargo plan
+        id: desktop
         uses: boringcache/one@ab52a39d3d7358c22b359a6ffbf86cf74be9bf56 # v1 / 1.18.1
         with:
           cli-version: ${{ inputs.cli_version }}
-          trust-policy: restore
           setup: none
           mode: cargo
+          trust-policy: restore
           working-directory: upstream
           fail-on-cache-error: true
-          metadata-hints: phase=fresh-head-desktop
+          diagnostics: summary
+          metadata-hints: phase=layers-${{ matrix.lane }}-desktop
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ""
           DENO_SNAPSHOT_MINIFY_SOURCES: "1"
 
-      - name: Report disk after release build
-        run: df -h
-
-      - name: Verify the Deno head build
+      - name: Require combined target restore and Deno freshness state
+        if: matrix.lane == 'combined'
         run: |
-          set -euo pipefail
-          test -x upstream/target/release/deno
-          test -x upstream/target/release/denort
-          test -x upstream/target/release/test_server
-          test -s upstream/target/release/libdenort.so
-          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
-          cp "${{ steps.build_primary.outputs.evidence-path }}" /tmp/deno-head-primary-action.json
-          cp "${{ steps.build_desktop.outputs.evidence-path }}" /tmp/deno-head-desktop-action.json
+          jq -e '.phases.restore.mode_evidence.target_cache_hit == true' \
+            "${{ steps.primary.outputs.evidence-path }}"
+          test -s upstream/target/.boringcache/cargo-freshness-v2.json
 
-      - name: Publish product summary
+      - name: Require the sccache-only plan to exclude target transport
+        if: matrix.lane == 'sccache-only'
         run: |
-          {
-            echo "## Deno Cargo product run"
-            echo
-            echo "- CLI override: \`${{ inputs.cli_version || 'Action default' }}\`"
-            echo "- Source: \`${{ needs.publish-base.outputs.base_sha }}\` → \`${{ needs.publish-base.outputs.head_sha }}\`"
-            echo "- Primary target available before the adjacent build: \`${{ steps.build_primary.outputs.cache-hit }}\`"
-            echo "- Desktop target available before the adjacent build: \`${{ steps.build_desktop.outputs.cache-hit }}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          jq -e '
+            .phases.restore.mode_evidence.archive_entries |
+            all(.kind != "cargo-target")
+          ' "${{ steps.primary.outputs.evidence-path }}"
 
-      - name: Upload head evidence
+      - name: Report selected-layer evidence
+        run: |
+          echo "lane_seconds=$(( $(date +%s) - ${{ steps.timer.outputs.started_at }} ))" >> "$GITHUB_STEP_SUMMARY"
+          ./scripts/summarize-cargo-evidence.py \
+            "${{ matrix.lane }}-primary" "${{ steps.primary.outputs.evidence-path }}" \
+            "${{ matrix.lane }}-desktop" "${{ steps.desktop.outputs.evidence-path }}"
+
+      - name: Retain selected-layer evidence
         uses: actions/upload-artifact@v6
         with:
-          name: deno-cargo-product-head
-          path: /tmp/deno-head-*.json
+          name: deno-cargo-layers-${{ matrix.lane }}
+          path: |
+            ${{ steps.primary.outputs.evidence-path }}
+            ${{ steps.desktop.outputs.evidence-path }}
+            upstream/target/.boringcache/cargo-freshness-v2.json
+          if-no-files-found: error
+
+  report:
+    name: Compare Cargo layers
+    needs: [cold, warm]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download every lane's product evidence
+        uses: actions/download-artifact@v6
+        with:
+          pattern: deno-cargo-layers-*
+          path: layer-evidence
+
+      - name: Publish the independent layer report
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark-results
+          args=()
+          while IFS= read -r evidence; do
+            label="$(basename "$(dirname "$evidence")")/$(basename "$evidence")"
+            args+=("$label" "$evidence")
+          done < <(find layer-evidence -type f -name '*.json' -print | sort)
+          test "${#args[@]}" -gt 0
+          ./scripts/summarize-cargo-evidence.py "${args[@]}" |
+            tee benchmark-results/deno-cargo-layer-proof.md
+
+      - name: Retain the layer report
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-deno-cargo-layer-proof
+          path: benchmark-results/deno-cargo-layer-proof.md
           if-no-files-found: error
