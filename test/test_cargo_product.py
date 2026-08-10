@@ -114,21 +114,19 @@ class DenoReleaseWorkloadTest(unittest.TestCase):
         self.assertEqual(workflows.count("verify-deno-release-recipe.py upstream"), 3)
 
     def test_source_updates_keep_advancing_the_rolling_workload(self):
-        dispatcher = (ROOT / ".github/workflows/deno-rust-cache-proof.yml").read_text()
+        rolling = (ROOT / ".github/workflows/deno-cargo-rolling-chain.yml").read_text()
         sync = (ROOT / ".github/workflows/sync.yml").read_text()
         source = dict(
             line.split("=", 1)
             for line in (ROOT / "benchmark-source.env").read_text().splitlines()
         )
 
-        self.assertRegex(source["DENO_ROLLING_CACHE_SCOPE"], r"^r\d+-a\d+$")
-        self.assertIn('cron: "*/30 * * * *"', sync)
+        self.assertNotIn("DENO_ROLLING_CACHE_SCOPE", source)
+        self.assertIn('cron: "2,32 * * * *"', sync)
         self.assertIn("advance-source-pair.sh benchmark-source.env DENO", sync)
-        self.assertIn("Require the previous rolling benchmark to be green", sync)
-        self.assertIn(
-            "github.event_name == 'push' || inputs.experiment == 'cargo-rolling-chain'",
-            dispatcher,
-        )
+        self.assertIn('paths: ["benchmark-source.env"]', rolling)
+        self.assertIn('echo "cache_scope=rolling-${ref_slug}"', rolling)
+        self.assertIn("group: benchmark-deno-cargo-rolling-chain", rolling)
 
 
 if __name__ == "__main__":
