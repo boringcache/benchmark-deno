@@ -104,6 +104,17 @@ def require(condition: bool, message: str) -> None:
         raise RecipeMismatch(message)
 
 
+def cargo_plan_command(path: Path) -> list[str]:
+    match = re.search(
+        r"^command\s*=\s*\[(?P<body>.*?)^\]$",
+        path.read_text(),
+        re.MULTILINE | re.DOTALL,
+    )
+    if not match:
+        raise RecipeMismatch(f"Missing BoringCache Cargo command in {path}")
+    return re.findall(r'"([^"]*)"', match.group("body"))
+
+
 def verify(upstream: Path) -> str:
     contract = read_settings(ROOT / "scripts/deno-release-recipe.env")
     benchmark_source = read_settings(ROOT / "benchmark-source.env")
@@ -116,15 +127,19 @@ def verify(upstream: Path) -> str:
     toolchain_text = toolchain_path.read_text()
     channel_match = re.search(r'^channel = "([^"]+)"$', toolchain_text, re.MULTILINE)
     components_match = re.search(
-        r'^components = \[(?P<components>[^\]]*)\]$', toolchain_text, re.MULTILINE
+        r"^components = \[(?P<components>[^\]]*)\]$", toolchain_text, re.MULTILINE
     )
-    require(channel_match is not None, "Missing channel in upstream/rust-toolchain.toml")
+    require(
+        channel_match is not None, "Missing channel in upstream/rust-toolchain.toml"
+    )
     require(
         components_match is not None,
         "Missing components in upstream/rust-toolchain.toml",
     )
     toolchain_channel = channel_match.group(1)
-    toolchain_components = re.findall(r'"([^"]+)"', components_match.group("components"))
+    toolchain_components = re.findall(
+        r'"([^"]+)"', components_match.group("components")
+    )
     require(
         toolchain_channel == benchmark_source["DENO_RUST_VERSION"],
         "DENO_RUST_VERSION no longer matches upstream/rust-toolchain.toml",
@@ -134,9 +149,7 @@ def verify(upstream: Path) -> str:
         "Deno's pinned toolchain no longer includes rust-src",
     )
 
-    job = extract_job(
-        workflow_path.read_text(), contract["DENO_UPSTREAM_RELEASE_JOB"]
-    )
+    job = extract_job(workflow_path.read_text(), contract["DENO_UPSTREAM_RELEASE_JOB"])
     for variable, action in (
         ("DENO_CHECKOUT_ACTION", contract["DENO_CHECKOUT_ACTION"]),
         ("DENO_SETUP_ACTION", contract["DENO_SETUP_ACTION"]),
@@ -210,10 +223,7 @@ def verify(upstream: Path) -> str:
     )
 
     local_setup = (ROOT / "scripts/setup-deno-linux.sh").read_text()
-    local_frame_setup = (
-        ROOT / "scripts/configure-deno-frame-pointers.sh"
-    ).read_text()
-    cargo_plan = (ROOT / ".boringcache.toml").read_text()
+    local_frame_setup = (ROOT / "scripts/configure-deno-frame-pointers.sh").read_text()
     local_workflows = "\n".join(
         (ROOT / relative_path).read_text()
         for relative_path in (
@@ -249,8 +259,9 @@ def verify(upstream: Path) -> str:
         "configure-deno-frame-pointers.sh does not use DENO_FRAME_POINTER_RUSTFLAGS",
     )
     expected_local_flags = [
-        flag.replace(f"clang-{llvm}", "clang-${llvm_version}")
-        .replace(f"lld-{llvm}", "lld-${llvm_version}")
+        flag.replace(f"clang-{llvm}", "clang-${llvm_version}").replace(
+            f"lld-{llvm}", "lld-${llvm_version}"
+        )
         for flag in expected_base_flags
     ]
     for flag in expected_local_flags:
@@ -268,13 +279,7 @@ def verify(upstream: Path) -> str:
         'echo "$RUSTFLAGS ${DENO_FRAME_POINTER_RUSTFLAGS}"' in local_frame_setup,
         "configure-deno-frame-pointers.sh no longer appends Deno's exact flags",
     )
-    command_match = re.search(
-        r"^command\s*=\s*\[(?P<body>.*?)^\]$",
-        cargo_plan,
-        re.MULTILINE | re.DOTALL,
-    )
-    require(command_match is not None, "Missing BoringCache Cargo command")
-    actual_cargo_plan = re.findall(r'"([^"]*)"', command_match.group("body"))
+    actual_cargo_plan = cargo_plan_command(ROOT / ".boringcache.toml")
     phase_selector = load_phase_selector()
     expected_cargo_plan = shlex.split(expected_builds[0])
     require(
@@ -291,6 +296,15 @@ def verify(upstream: Path) -> str:
         == shlex.split(expected_builds[1]),
         "The desktop Cargo phase selector no longer matches Deno's release job",
     )
+
+    for lane in ("cold", "sccache-only", "combined"):
+        for phase in ("primary", "desktop"):
+            expected = phase_selector.cargo_command(contract, phase)
+            plan_path = ROOT / "plans" / lane / phase / ".boringcache.toml"
+            require(
+                cargo_plan_command(plan_path) == expected,
+                f"{plan_path} no longer matches Deno's {phase} release command",
+            )
 
     return benchmark_source["DENO_HEAD_SHA"]
 

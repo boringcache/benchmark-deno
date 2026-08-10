@@ -1,0 +1,32 @@
+workspace = "boringcache/benchmark-deno"
+
+[entries.cargo-registry]
+tag = "deno-cargo-layers-1181-0752844-registry"
+
+[entries.cargo-target]
+kind = "cargo-target"
+tag = "deno-cargo-layers-1181-0752844-target"
+path = "target"
+
+[profiles.cargo-product]
+entries = ["cargo-registry", "cargo-target"]
+
+[adapters.sccache]
+tag = "deno-cargo-layers-1181-0752844-sccache"
+no-git = true
+metadata-hints = ["benchmark=deno-cargo-layers", "layer=compiler"]
+
+[adapters.cargo]
+profiles = ["cargo-product"]
+compiler-cache = "sccache"
+no-git = true
+metadata-hints = ["benchmark=deno-cargo-layers", "lane=cold", "phase=desktop"]
+command = [
+  "cargo",
+  "build",
+  "-Zbuild-std=core,alloc,std,proc_macro,panic_abort",
+  "--release",
+  "--locked",
+  "-p",
+  "denort_desktop",
+]
