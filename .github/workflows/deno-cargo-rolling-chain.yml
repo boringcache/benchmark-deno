@@ -168,7 +168,7 @@ jobs:
       
       - name: Build Deno release binaries through the Cargo product
         id: build_primary
-        uses: boringcache/one@78e1fd3257bbdf27722c46b500a39b6626fc8d27 # v1 / 1.18.0
+        uses: boringcache/one@ab52a39d3d7358c22b359a6ffbf86cf74be9bf56 # v1 / 1.18.1
         with:
           cli-version: ${{ inputs.cli_version }}
           trust-policy: publish
@@ -187,7 +187,7 @@ jobs:
 
       - name: Build denort_desktop through the Cargo product
         id: build_desktop
-        uses: boringcache/one@78e1fd3257bbdf27722c46b500a39b6626fc8d27 # v1 / 1.18.0
+        uses: boringcache/one@ab52a39d3d7358c22b359a6ffbf86cf74be9bf56 # v1 / 1.18.1
         with:
           cli-version: ${{ inputs.cli_version }}
           trust-policy: publish
