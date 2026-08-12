@@ -103,6 +103,8 @@ class DenoReleaseWorkloadTest(unittest.TestCase):
         self.assertIn("select-deno-cargo-phase.py desktop", workflows)
         self.assertIn("/tmp/memfd_create_shim.o", linux_setup)
         self.assertIn("$(pwd)/target/release/lto-cache", linux_setup)
+        self.assertIn("--retry-all-errors", linux_setup)
+        self.assertIn("--proto-redir '=https'", linux_setup)
         self.assertIn('echo "RUSTC_BOOTSTRAP=1"', frame_setup)
         self.assertIn("${DENO_FRAME_POINTER_RUSTFLAGS}", frame_setup)
         self.assertEqual(

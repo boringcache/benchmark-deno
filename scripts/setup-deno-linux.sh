@@ -52,9 +52,10 @@ sudo apt-get install -y --no-install-recommends \
 "clang-${llvm_version}" -c -o /tmp/glibc_math_shim.o tools/glibc_math_shim.c -fPIC
 
 echo "Decompressing sysroot..."
-wget -q \
-  "https://github.com/denoland/deno_sysroot_build/releases/download/${sysroot_release}/sysroot-$(uname -m).tar.xz" \
-  -O /tmp/sysroot.tar.xz
+curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+  --retry 5 --retry-all-errors --retry-delay 2 \
+  --output /tmp/sysroot.tar.xz \
+  "https://github.com/denoland/deno_sysroot_build/releases/download/${sysroot_release}/sysroot-$(uname -m).tar.xz"
 cd /
 xzcat /tmp/sysroot.tar.xz | sudo tar -x
 sudo mount --rbind /dev /sysroot/dev
