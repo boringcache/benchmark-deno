@@ -6,6 +6,7 @@ on:
     - cron: "2,32 * * * *"
 
 permissions:
+  actions: write
   contents: write
 
 concurrency:
@@ -21,17 +22,19 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN }}
+          token: ${{ github.token }}
 
       - name: Advance the adjacent source pair
         id: source
         env:
-          GH_TOKEN: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: ./scripts/advance-source-pair.sh benchmark-source.env DENO
 
       - name: Commit the upstream update
+        id: sync
         run: |
           set -euo pipefail
+          echo "updated=false" >> "$GITHUB_OUTPUT"
           if git diff --quiet -- benchmark-source.env; then
             echo "No upstream changes"
             exit 0
@@ -42,3 +45,17 @@ jobs:
           git add benchmark-source.env
           git commit -m "Update upstream to ${{ steps.source.outputs.source_repository }}@${{ steps.source.outputs.source_short_sha }}"
           git push origin HEAD:main
+          echo "updated=true" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch rolling benchmark
+        if: steps.sync.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source benchmark-source.env
+          gh workflow run deno-cargo-rolling-chain.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f cache_scope=rolling-main \
+            -f "base_sha=${DENO_BASE_SHA}" \
+            -f "head_sha=${DENO_HEAD_SHA}"
