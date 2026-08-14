@@ -57,6 +57,22 @@ class SourceSyncTest(unittest.TestCase):
 
 
 class DenoReleaseWorkloadTest(unittest.TestCase):
+    def test_cargo_product_uses_reusable_dependency_archives(self):
+        config = (ROOT / ".boringcache.toml").read_text()
+        scope_script = (ROOT / "scripts/scope-boringcache-run.sh").read_text()
+
+        for entry in (
+            "cargo-registry-cache",
+            "cargo-registry-index",
+            "cargo-git-db",
+            "cargo-target",
+        ):
+            self.assertIn(f'"{entry}"', config)
+            self.assertIn(f"deno-{entry}", scope_script)
+
+        self.assertNotIn("[entries.cargo-registry]", config)
+        self.assertNotIn("[entries.cargo-git]", config)
+
     def test_phase_selector_keeps_the_two_upstream_cargo_commands_distinct(self):
         config = (ROOT / ".boringcache.toml").read_text()
         with tempfile.TemporaryDirectory() as directory:

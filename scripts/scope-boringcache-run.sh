@@ -11,7 +11,9 @@ fi
 
 config_path="${repo_root}/.boringcache.toml"
 for base_tag in \
-  deno-cargo-registry \
+  deno-cargo-registry-cache \
+  deno-cargo-registry-index \
+  deno-cargo-git-db \
   deno-cargo-target; do
   old_tag="${base_tag}-local"
   new_tag="${base_tag}-${scope}"
@@ -30,4 +32,4 @@ if ! grep -Fq "tag = \"${sccache_old_tag}\"" "$config_path"; then
 fi
 sed -i "s/tag = \"${sccache_old_tag}\"/tag = \"${sccache_new_tag}\"/" "$config_path"
 
-echo "Scoped Cargo dependency, target, and sccache tags to ${scope}."
+echo "Scoped narrow Cargo dependency, target, and sccache tags to ${scope}."
