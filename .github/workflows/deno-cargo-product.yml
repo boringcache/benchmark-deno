@@ -120,7 +120,7 @@ jobs:
 
       - name: Build Deno release binaries through boringcache cargo
         id: build_primary
-        uses: boringcache/one@e740ae5b3075ad2fe0d7b1edd2ed41b3ba130dae # v1 / 1.19.4
+        uses: boringcache/one@dbbed01c94f89e6b52964e91477617ce6c39488d # v1 / 1.19.5
         with:
           cli-version: ${{ inputs.cli_version }}
           trust-policy: publish
@@ -139,7 +139,7 @@ jobs:
 
       - name: Build denort_desktop through boringcache cargo
         id: build_desktop
-        uses: boringcache/one@e740ae5b3075ad2fe0d7b1edd2ed41b3ba130dae # v1 / 1.19.4
+        uses: boringcache/one@dbbed01c94f89e6b52964e91477617ce6c39488d # v1 / 1.19.5
         with:
           cli-version: ${{ inputs.cli_version }}
           trust-policy: publish
@@ -262,7 +262,7 @@ jobs:
 
       - name: Restore and build Deno release binaries through boringcache cargo
         id: build_primary
-        uses: boringcache/one@e740ae5b3075ad2fe0d7b1edd2ed41b3ba130dae # v1 / 1.19.4
+        uses: boringcache/one@dbbed01c94f89e6b52964e91477617ce6c39488d # v1 / 1.19.5
         with:
           cli-version: ${{ inputs.cli_version }}
           trust-policy: restore
@@ -280,7 +280,7 @@ jobs:
 
       - name: Build denort_desktop through boringcache cargo
         id: build_desktop
-        uses: boringcache/one@e740ae5b3075ad2fe0d7b1edd2ed41b3ba130dae # v1 / 1.19.4
+        uses: boringcache/one@dbbed01c94f89e6b52964e91477617ce6c39488d # v1 / 1.19.5
         with:
           cli-version: ${{ inputs.cli_version }}
           trust-policy: restore
