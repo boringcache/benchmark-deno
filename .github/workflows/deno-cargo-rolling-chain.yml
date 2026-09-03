@@ -1,0 +1,281 @@
+name: "Deno Cargo rolling run"
+run-name: ${{ github.event_name == 'push' && 'Deno Cargo rolling pinned source update' || format('Deno Cargo rolling {0} to {1}', inputs.base_sha, inputs.head_sha) }}
+
+on:
+  push:
+    branches: [main]
+    paths: ["benchmark-source.env"]
+  workflow_dispatch:
+    inputs:
+      cli_version:
+        description: Exact immutable BoringCache CLI release tag.
+        required: false
+        type: string
+        default: ""
+      cache_scope:
+        description: Existing rolling scope whose target was published from base_sha.
+        required: true
+        type: string
+      base_sha:
+        description: Source commit currently represented by the published target.
+        required: true
+        type: string
+      head_sha:
+        description: Immediate child commit to build and publish as the next seed.
+        required: true
+        type: string
+      runner_label:
+        description: Optional runner label for a manual main-branch experiment.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: benchmark-deno-cargo-rolling-chain
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+  RUST_LIB_BACKTRACE: 0
+
+jobs:
+  source:
+    name: Resolve Deno source
+    runs-on: ubuntu-24.04
+    outputs:
+      base_sha: ${{ steps.source.outputs.DENO_BASE_SHA }}
+      head_sha: ${{ steps.source.outputs.DENO_HEAD_SHA }}
+      cache_scope: ${{ steps.scope.outputs.cache_scope }}
+      source_repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read pinned source
+        id: source
+        run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
+
+      - name: Name the rolling cohort
+        id: scope
+        run: |
+          set -euo pipefail
+          ref_slug="$(printf '%s' "$GITHUB_REF_NAME" | tr -c 'A-Za-z0-9._-' '-')"
+          ref_slug="${ref_slug#-}"
+          ref_slug="${ref_slug%-}"
+          ref_slug="${ref_slug:-main}"
+          echo "cache_scope=rolling-${ref_slug}" >> "$GITHUB_OUTPUT"
+
+  advance:
+    name: BoringCache Deno Cargo commit
+    needs: source
+    if: inputs.runner_label == '' || github.ref_name == 'main'
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-24.04' }}
+    timeout-minutes: 240
+    env:
+      RESOLVED_BASE_SHA: ${{ github.event_name == 'push' && needs.source.outputs.base_sha || inputs.base_sha }}
+      RESOLVED_HEAD_SHA: ${{ github.event_name == 'push' && needs.source.outputs.head_sha || inputs.head_sha }}
+      RESOLVED_CACHE_SCOPE: ${{ github.event_name == 'push' && needs.source.outputs.cache_scope || inputs.cache_scope }}
+    steps:
+      - name: Start the workflow timer
+        id: workflow_timer
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+      
+      - name: Configure git
+        run: |
+          git config --global core.symlinks true
+          git config --global fetch.parallel 32
+
+      - name: Checkout benchmark repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Read pinned toolchain
+        id: source
+        run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
+
+      - name: Checkout adjacent Deno head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
+          ref: ${{ env.RESOLVED_HEAD_SHA }}
+          path: upstream
+          fetch-depth: 5
+          submodules: false
+
+      - name: Require one-commit source cadence
+        run: |
+          set -euo pipefail
+          test "$(git -C upstream rev-parse HEAD)" = "$RESOLVED_HEAD_SHA"
+          test "$(git -C upstream rev-parse HEAD^)" = "$RESOLVED_BASE_SHA"
+          git -C upstream clean -fdx
+          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
+
+      - name: Clone submodule ./tests/util/std
+        run: git -C upstream submodule update --init --recursive --depth=1 -- ./tests/util/std
+
+      - name: Verify Deno Linux release recipe
+        run: ./scripts/verify-deno-release-recipe.py upstream
+
+      - name: Install Deno snapshot minifier runtime
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
+        with:
+          deno-version: v2.x
+
+      - name: Pre-install rustup 1.28.2 (workaround broken 1.29.0)
+        run: ./scripts/preinstall-deno-rustup.sh
+
+      - name: Expose Deno's pinned toolchain file
+        run: ln -s upstream/rust-toolchain.toml rust-toolchain.toml
+
+      - uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621
+
+      - name: Log versions
+        run: |
+          echo '*** Python'
+          command -v python && python --version || echo 'No python found or bad executable'
+          echo '*** Rust'
+          command -v rustc && rustc --version || echo 'No rustc found or bad executable'
+          echo '*** Cargo'
+          command -v cargo && cargo --version || echo 'No cargo found or bad executable'
+          echo '*** Deno'
+          command -v deno && deno --version || echo 'No deno found or bad executable'
+          echo '*** Node'
+          command -v node && node --version || echo 'No node found or bad executable'
+
+      - name: Configure Deno Linux build environment
+        run: ./scripts/setup-deno-linux.sh
+
+      - name: Scope the persistent Cargo product chain
+        run: ./scripts/scope-boringcache-run.sh "$RESOLVED_CACHE_SCOPE"
+
+      - name: Configure canary build
+        run: echo "DENO_CANARY=true" >> "$GITHUB_ENV"
+
+      - name: Configure frame-pointer panic traces
+        run: ./scripts/configure-deno-frame-pointers.sh
+
+      - name: Require an empty destination
+        run: test ! -e upstream/target
+
+      - name: Report disk before release build
+        run: df -h
+
+      - name: Start the build timer
+        id: build_timer
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+      
+      - name: Build Deno release binaries through the Cargo product
+        id: build_primary
+        uses: boringcache/one@20202f4c4b789cdee581ae3f117dfafb8293b19c # v1 / 1.20.0
+        with:
+          cli-version: ${{ inputs.cli_version }}
+          trust-policy: publish
+          setup: none
+          mode: cargo
+          working-directory: upstream
+          fail-on-cache-error: true
+          metadata-hints: phase=rolling-primary
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
+          DENO_SNAPSHOT_MINIFY_SOURCES: "1"
+
+      - name: Select Deno's denort_desktop release command
+        run: ./scripts/select-deno-cargo-phase.py desktop
+
+      - name: Build denort_desktop through the Cargo product
+        id: build_desktop
+        uses: boringcache/one@20202f4c4b789cdee581ae3f117dfafb8293b19c # v1 / 1.20.0
+        with:
+          cli-version: ${{ inputs.cli_version }}
+          trust-policy: publish
+          setup: none
+          mode: cargo
+          working-directory: upstream
+          fail-on-cache-error: true
+          metadata-hints: phase=rolling-desktop
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
+          DENO_SNAPSHOT_MINIFY_SOURCES: "1"
+
+      - name: Capture the build timing
+        id: build_timing
+        env:
+          BUILD_STARTED_AT: ${{ steps.build_timer.outputs.started_at }}
+        run: echo "build_seconds=$(( $(date +%s) - BUILD_STARTED_AT ))" >> "$GITHUB_OUTPUT"
+      
+      - name: Report disk after release build
+        run: df -h
+
+      - name: Verify the Deno build
+        run: |
+          set -euo pipefail
+          test -x upstream/target/release/deno
+          test -x upstream/target/release/denort
+          test -x upstream/target/release/test_server
+          test -s upstream/target/release/libdenort.so
+          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
+          cp "${{ steps.build_primary.outputs.evidence-path }}" /tmp/deno-chain-primary-action.json
+          cp "${{ steps.build_desktop.outputs.evidence-path }}" /tmp/deno-chain-desktop-action.json
+
+      - name: Write the benchmark phase evidence
+        env:
+          WORKFLOW_STARTED_AT: ${{ steps.workflow_timer.outputs.started_at }}
+          BUILD_SECONDS: ${{ steps.build_timing.outputs.build_seconds }}
+          CACHE_HIT: ${{ steps.build_primary.outputs.cache-hit }}
+          CACHE_TAG: ${{ steps.build_primary.outputs.cache-tag }}
+          CACHE_WORKSPACE: ${{ steps.build_primary.outputs.workspace }}
+          EVIDENCE_PATH: ${{ steps.build_primary.outputs.evidence-path }}
+          SOURCE_REPOSITORY: ${{ needs.source.outputs.source_repository }}
+          SOURCE_SHA: ${{ env.RESOLVED_HEAD_SHA }}
+        run: |
+          set -euo pipefail
+          python3 ./scripts/benchmark-report.py phase \
+            --benchmark deno-cargo \
+            --strategy boringcache \
+            --lane rolling \
+            --phase commit \
+            --mode cargo \
+            --build-seconds "$BUILD_SECONDS" \
+            --workflow-seconds "$(( $(date +%s) - WORKFLOW_STARTED_AT ))" \
+            --cache-hit "$CACHE_HIT" \
+            --cache-tag "$CACHE_TAG" \
+            --workspace "$CACHE_WORKSPACE" \
+            --source-repository "$SOURCE_REPOSITORY" \
+            --source-sha "$SOURCE_SHA" \
+            --evidence "$EVIDENCE_PATH"
+      
+      - name: Publish the Deno Cargo rolling benchmark report
+        run: |
+          python3 ./scripts/benchmark-report.py summarize \
+            --title "Deno Cargo rolling benchmark" \
+            --input-dir benchmark-results \
+            --output-dir benchmark-results
+      
+      - name: Retain the Deno Cargo rolling result
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-deno-cargo-boringcache-rolling
+          path: benchmark-results/deno-cargo-boringcache-rolling.json
+          if-no-files-found: error
+      
+      - name: Publish rolling run summary
+        run: |
+          {
+            echo "## Deno Cargo rolling run"
+            echo
+            echo "- CLI: \`${{ inputs.cli_version }}\`"
+            echo "- Source: \`${RESOLVED_BASE_SHA}\` → \`${RESOLVED_HEAD_SHA}\`"
+            echo "- Primary target available before the adjacent build: \`${{ steps.build_primary.outputs.cache-hit }}\`"
+            echo "- Desktop target available before the adjacent build: \`${{ steps.build_desktop.outputs.cache-hit }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain product evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: deno-cargo-rolling-${{ env.RESOLVED_HEAD_SHA }}
+          path: /tmp/deno-chain-*-action.json
+          if-no-files-found: error
