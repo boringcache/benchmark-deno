@@ -83,6 +83,11 @@ jobs:
 
       - uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.17.0
+
       - name: Log versions
         run: |
           echo '*** Python'
@@ -124,11 +129,9 @@ jobs:
         with:
           cli-version: ${{ inputs.cli_version }}
           trust-policy: publish
-          setup: none
           mode: cargo
           working-directory: upstream
           fail-on-cache-error: true
-          metadata-hints: phase=fresh-base-primary
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
@@ -143,11 +146,9 @@ jobs:
         with:
           cli-version: ${{ inputs.cli_version }}
           trust-policy: publish
-          setup: none
           mode: cargo
           working-directory: upstream
           fail-on-cache-error: true
-          metadata-hints: phase=fresh-base-desktop
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
@@ -225,6 +226,11 @@ jobs:
 
       - uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.17.0
+
       - name: Log versions
         run: |
           echo '*** Python'
@@ -266,11 +272,9 @@ jobs:
         with:
           cli-version: ${{ inputs.cli_version }}
           trust-policy: restore
-          setup: none
           mode: cargo
           working-directory: upstream
           fail-on-cache-error: true
-          metadata-hints: phase=fresh-head-primary
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           DENO_SNAPSHOT_MINIFY_SOURCES: "1"
@@ -284,11 +288,9 @@ jobs:
         with:
           cli-version: ${{ inputs.cli_version }}
           trust-policy: restore
-          setup: none
           mode: cargo
           working-directory: upstream
           fail-on-cache-error: true
-          metadata-hints: phase=fresh-head-desktop
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           DENO_SNAPSHOT_MINIFY_SOURCES: "1"

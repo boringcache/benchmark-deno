@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import tempfile
@@ -8,6 +9,18 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_script(name: str):
+    path = ROOT / "scripts" / name
+    spec = importlib.util.spec_from_file_location(name.removesuffix(".py"), path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+benchmark_report = load_script("benchmark-report.py")
 
 
 class SourceSyncTest(unittest.TestCase):
@@ -57,6 +70,21 @@ class SourceSyncTest(unittest.TestCase):
 
 
 class DenoReleaseWorkloadTest(unittest.TestCase):
+    def test_benchmark_report_reads_plan_identity_from_action_evidence(self):
+        evidence = {
+            "phases": {
+                "restore": {
+                    "cache_tag": "deno-cargo-rolling",
+                    "workspace": "boringcache/benchmark-deno",
+                }
+            }
+        }
+
+        self.assertEqual(
+            benchmark_report.evidence_restore_phase(evidence),
+            evidence["phases"]["restore"],
+        )
+
     def test_cargo_product_uses_reusable_dependency_archives(self):
         config = (ROOT / ".boringcache.toml").read_text()
         scope_script = (ROOT / "scripts/scope-boringcache-run.sh").read_text()
