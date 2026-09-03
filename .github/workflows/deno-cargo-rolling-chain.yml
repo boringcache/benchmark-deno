@@ -131,6 +131,11 @@ jobs:
 
       - uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.17.0
+
       - name: Log versions
         run: |
           echo '*** Python'
@@ -172,11 +177,9 @@ jobs:
         with:
           cli-version: ${{ inputs.cli_version }}
           trust-policy: publish
-          setup: none
           mode: cargo
           working-directory: upstream
           fail-on-cache-error: true
-          metadata-hints: phase=rolling-primary
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
@@ -191,11 +194,9 @@ jobs:
         with:
           cli-version: ${{ inputs.cli_version }}
           trust-policy: publish
-          setup: none
           mode: cargo
           working-directory: upstream
           fail-on-cache-error: true
-          metadata-hints: phase=rolling-desktop
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
@@ -226,8 +227,6 @@ jobs:
           WORKFLOW_STARTED_AT: ${{ steps.workflow_timer.outputs.started_at }}
           BUILD_SECONDS: ${{ steps.build_timing.outputs.build_seconds }}
           CACHE_HIT: ${{ steps.build_primary.outputs.cache-hit }}
-          CACHE_TAG: ${{ steps.build_primary.outputs.cache-tag }}
-          CACHE_WORKSPACE: ${{ steps.build_primary.outputs.workspace }}
           EVIDENCE_PATH: ${{ steps.build_primary.outputs.evidence-path }}
           SOURCE_REPOSITORY: ${{ needs.source.outputs.source_repository }}
           SOURCE_SHA: ${{ env.RESOLVED_HEAD_SHA }}
@@ -242,8 +241,6 @@ jobs:
             --build-seconds "$BUILD_SECONDS" \
             --workflow-seconds "$(( $(date +%s) - WORKFLOW_STARTED_AT ))" \
             --cache-hit "$CACHE_HIT" \
-            --cache-tag "$CACHE_TAG" \
-            --workspace "$CACHE_WORKSPACE" \
             --source-repository "$SOURCE_REPOSITORY" \
             --source-sha "$SOURCE_SHA" \
             --evidence "$EVIDENCE_PATH"
