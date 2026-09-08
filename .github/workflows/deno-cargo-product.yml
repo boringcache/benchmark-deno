@@ -1,5 +1,5 @@
 name: "Deno Cargo product run"
-run-name: ${{ format('Deno Cargo fresh | CLI {0}', inputs.cli_version || 'Action default') }}
+run-name: ${{ format('Deno Cargo fresh | {0} | CLI {1}', inputs.cache_profile || 'cargo-product', inputs.cli_version || 'Action default') }}
 
 on:
   workflow_dispatch:
@@ -9,6 +9,12 @@ on:
         required: false
         type: string
         default: ""
+      cache_profile:
+        description: Cargo product caches or native compiler cache only.
+        required: false
+        type: choice
+        options: [cargo-product, compiler-only]
+        default: cargo-product
       runner_label:
         description: Optional runner label for a manual main-branch experiment.
         required: false
@@ -26,6 +32,7 @@ permissions:
 
 env:
   CACHE_SCOPE: r${{ github.run_id }}-a${{ github.run_attempt }}
+  CACHE_PROFILE: ${{ inputs.cache_profile || 'cargo-product' }}
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
   RUST_LIB_BACKTRACE: 0
@@ -106,8 +113,11 @@ jobs:
       - name: Configure Deno Linux build environment
         run: ./scripts/setup-deno-linux.sh
 
+      - name: Select Cargo cache layers
+        run: python3 ./scripts/select-deno-cargo-profile.py "$CACHE_PROFILE"
+
       - name: Scope the fresh Cargo product cohort
-        run: ./scripts/scope-boringcache-run.sh "$CACHE_SCOPE"
+        run: ./scripts/scope-boringcache-run.sh "$CACHE_SCOPE" "$CACHE_PROFILE"
 
       - name: Configure canary build
         run: echo "DENO_CANARY=true" >> "$GITHUB_ENV"
@@ -249,8 +259,11 @@ jobs:
       - name: Configure Deno Linux build environment
         run: ./scripts/setup-deno-linux.sh
 
+      - name: Select Cargo cache layers
+        run: python3 ./scripts/select-deno-cargo-profile.py "$CACHE_PROFILE"
+
       - name: Scope the base Cargo product cohort
-        run: ./scripts/scope-boringcache-run.sh "$CACHE_SCOPE"
+        run: ./scripts/scope-boringcache-run.sh "$CACHE_SCOPE" "$CACHE_PROFILE"
 
       - name: Configure canary build
         run: echo "DENO_CANARY=true" >> "$GITHUB_ENV"
@@ -313,6 +326,8 @@ jobs:
         run: |
           {
             echo "## Deno Cargo product run"
+            echo "- Cache profile: ${CACHE_PROFILE}"
+            echo "- Base cache scope: ${CACHE_SCOPE}"
             echo
             echo "- CLI override: \`${{ inputs.cli_version || 'Action default' }}\`"
             echo "- Source: \`${{ needs.publish-base.outputs.base_sha }}\` → \`${{ needs.publish-base.outputs.head_sha }}\`"
