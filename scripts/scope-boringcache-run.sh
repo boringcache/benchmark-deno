@@ -3,11 +3,21 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 scope="${1:-}"
+profile="${2:-cargo-product}"
 
 if [[ ! "$scope" =~ ^[a-z0-9][a-z0-9._-]+$ ]]; then
   echo "Expected a lowercase benchmark cache scope, got: ${scope:-<empty>}" >&2
   exit 1
 fi
+
+case "$profile" in
+  cargo-product) ;;
+  compiler-only) scope="${scope}-compiler-only" ;;
+  *)
+    echo "Unknown Deno Cargo cache profile: ${profile}" >&2
+    exit 1
+    ;;
+esac
 
 config_path="${repo_root}/.boringcache.toml"
 for base_tag in \
@@ -32,4 +42,4 @@ if ! grep -Fq "tag = \"${sccache_old_tag}\"" "$config_path"; then
 fi
 sed -i "s/tag = \"${sccache_old_tag}\"/tag = \"${sccache_new_tag}\"/" "$config_path"
 
-echo "Scoped narrow Cargo dependency, target, and sccache tags to ${scope}."
+echo "Scoped Deno ${profile} cache tags to ${scope}."

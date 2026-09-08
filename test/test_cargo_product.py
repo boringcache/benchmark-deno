@@ -7,7 +7,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -21,6 +20,42 @@ def load_script(name: str):
 
 
 benchmark_report = load_script("benchmark-report.py")
+cargo_profile = load_script("select-deno-cargo-profile.py")
+
+
+class CargoProfileTest(unittest.TestCase):
+    def test_compiler_only_selection_preserves_the_workload_and_named_profiles(self):
+        original = (ROOT / ".boringcache.toml").read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".boringcache.toml"
+            path.write_text(original)
+            cargo_profile.select_profile(path, "compiler-only")
+            selected = path.read_text()
+
+        self.assertEqual(
+            selected.replace('profiles = ["compiler-only"]', 'profiles = ["cargo-product"]')
+            .replace('"lane=compiler-only"', '"lane=cargo-product"'),
+            original,
+        )
+        self.assertIn('[profiles.compiler-only]\nentries = []', selected)
+
+    def test_unknown_profile_leaves_configuration_unchanged(self):
+        original = (ROOT / ".boringcache.toml").read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".boringcache.toml"
+            path.write_text(original)
+            with self.assertRaisesRegex(ValueError, "Unknown Deno Cargo cache profile"):
+                cargo_profile.select_profile(path, "unknown")
+            self.assertEqual(path.read_text(), original)
+
+    def test_ambiguous_selection_leaves_configuration_unchanged(self):
+        original = 'profiles = ["cargo-product"]\n' * 2
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".boringcache.toml"
+            path.write_text(original)
+            with self.assertRaisesRegex(ValueError, "Expected one default Cargo profile"):
+                cargo_profile.select_profile(path, "compiler-only")
+            self.assertEqual(path.read_text(), original)
 
 
 class SourceSyncTest(unittest.TestCase):

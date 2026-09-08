@@ -1,5 +1,5 @@
 name: "Deno Cargo rolling run"
-run-name: ${{ github.event_name == 'push' && 'Deno Cargo rolling pinned source update' || format('Deno Cargo rolling {0} to {1}', inputs.base_sha, inputs.head_sha) }}
+run-name: ${{ github.event_name == 'push' && 'Deno Cargo rolling pinned source update' || format('Deno Cargo rolling {0} | {1} to {2}', inputs.cache_profile || 'cargo-product', inputs.base_sha, inputs.head_sha) }}
 
 on:
   push:
@@ -13,7 +13,7 @@ on:
         type: string
         default: ""
       cache_scope:
-        description: Existing rolling scope whose target was published from base_sha.
+        description: Base cache scope published from base_sha; the compiler-only suffix is added automatically.
         required: true
         type: string
       base_sha:
@@ -24,6 +24,12 @@ on:
         description: Immediate child commit to build and publish as the next seed.
         required: true
         type: string
+      cache_profile:
+        description: Cargo product caches or native compiler cache only.
+        required: false
+        type: choice
+        options: [cargo-product, compiler-only]
+        default: cargo-product
       runner_label:
         description: Optional runner label for a manual main-branch experiment.
         required: false
@@ -39,6 +45,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  CACHE_PROFILE: ${{ inputs.cache_profile || 'cargo-product' }}
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
   RUST_LIB_BACKTRACE: 0
@@ -152,8 +159,11 @@ jobs:
       - name: Configure Deno Linux build environment
         run: ./scripts/setup-deno-linux.sh
 
+      - name: Select Cargo cache layers
+        run: python3 ./scripts/select-deno-cargo-profile.py "$CACHE_PROFILE"
+
       - name: Scope the persistent Cargo product chain
-        run: ./scripts/scope-boringcache-run.sh "$RESOLVED_CACHE_SCOPE"
+        run: ./scripts/scope-boringcache-run.sh "$RESOLVED_CACHE_SCOPE" "$CACHE_PROFILE"
 
       - name: Configure canary build
         run: echo "DENO_CANARY=true" >> "$GITHUB_ENV"
@@ -263,6 +273,7 @@ jobs:
         run: |
           {
             echo "## Deno Cargo rolling run"
+            echo "- Cache profile: ${CACHE_PROFILE}"
             echo
             echo "- CLI: \`${{ inputs.cli_version }}\`"
             echo "- Source: \`${RESOLVED_BASE_SHA}\` → \`${RESOLVED_HEAD_SHA}\`"

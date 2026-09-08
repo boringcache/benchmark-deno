@@ -17,6 +17,9 @@ path = "upstream/target"
 [profiles.cargo-product]
 entries = ["cargo-registry-cache", "cargo-registry-index", "cargo-git-db", "cargo-target"]
 
+[profiles.compiler-only]
+entries = []
+
 [adapters.cargo]
 tag = "deno-rust-cache-local"
 profiles = ["cargo-product"]
