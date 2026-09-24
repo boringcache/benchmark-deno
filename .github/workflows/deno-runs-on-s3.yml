@@ -111,7 +111,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(grep -c '>/dev/null 2>&1$' scripts/setup-deno-linux.sh)" -eq 2
-          sed -i 's|>/dev/null 2>&1$|>/dev/null 2>&1 || true|' scripts/setup-deno-linux.sh
+          sed -i 's@>/dev/null 2>&1$@>/dev/null 2>\&1 || true@' scripts/setup-deno-linux.sh
           ./scripts/setup-deno-linux.sh
 
       - name: Select Cargo cache layers
@@ -262,7 +262,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(grep -c '>/dev/null 2>&1$' scripts/setup-deno-linux.sh)" -eq 2
-          sed -i 's|>/dev/null 2>&1$|>/dev/null 2>&1 || true|' scripts/setup-deno-linux.sh
+          sed -i 's@>/dev/null 2>&1$@>/dev/null 2>\&1 || true@' scripts/setup-deno-linux.sh
           ./scripts/setup-deno-linux.sh
 
       - name: Select Cargo cache layers
