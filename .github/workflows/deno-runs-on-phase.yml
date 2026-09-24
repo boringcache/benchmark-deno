@@ -33,6 +33,10 @@ on:
         required: false
         type: string
         default: ""
+      sccache_diagnostics:
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -210,6 +214,11 @@ jobs:
       - name: Explain Cargo fingerprint invalidation
         if: inputs.cache_variant == 'target-sccache' && inputs.phase == 'warm'
         run: echo 'CARGO_LOG=cargo::core::compiler::fingerprint=trace' >> "$GITHUB_ENV"
+      - name: Enable sccache diagnostics
+        if: inputs.sccache_diagnostics && inputs.provider == 'boringcache' && inputs.cache_variant == 'sccache-only'
+        run: |
+          echo "SCCACHE_ERROR_LOG=$RUNNER_TEMP/sccache-errors.log" >> "$GITHUB_ENV"
+          echo 'SCCACHE_LOG=debug' >> "$GITHUB_ENV"
       - name: Build Deno release binaries with BoringCache
         id: boringcache_primary
         if: inputs.provider == 'boringcache'
@@ -264,6 +273,9 @@ jobs:
               command = tomllib.load(source)["adapters"]["cargo"]["command"]
           subprocess.run(command, check=True)
           PY
+      - name: Summarize sccache diagnostics
+        if: always() && inputs.sccache_diagnostics && inputs.provider == 'boringcache'
+        run: python3 ./scripts/summarize-sccache-errors.py "$RUNNER_TEMP/sccache-errors.log"
       - name: Report Magic sccache stats
         if: inputs.provider == 'runs-on-cache' && inputs.cache_variant != 'target'
         env:

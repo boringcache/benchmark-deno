@@ -1,0 +1,18 @@
+name: Deno RunsOn sccache diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+  id-token: write
+
+jobs:
+  diagnose:
+    uses: ./.github/workflows/deno-runs-on-phase.yml
+    with:
+      provider: boringcache
+      phase: cold
+      cache_variant: sccache-only
+      sccache_diagnostics: true
