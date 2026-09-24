@@ -135,6 +135,29 @@ jobs:
           sed -i "/^\[adapters.cargo\]$/a compiler-cache = \"$compiler_cache\"" .boringcache.toml
           test ! -e upstream/target
           test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
+      - name: Preserve restored target freshness
+        if: inputs.cache_variant != 'sccache-only'
+        env:
+          PHASE: ${{ inputs.phase }}
+          BASE_SHA: ${{ steps.source.outputs.DENO_BASE_SHA }}
+          HEAD_SHA: ${{ steps.source.outputs.DENO_HEAD_SHA }}
+        run: |
+          set -euo pipefail
+          test ! -e upstream/target
+          find upstream -path 'upstream/.git' -prune -o -type f -exec touch -d '@946684800' {} +
+          sysroot="$(cd upstream && rustc --print sysroot)"
+          std_source="$sysroot/lib/rustlib/src/rust/library"
+          test -d "$std_source"
+          find "$std_source" -type f -exec touch -d '@946684800' {} +
+          if [[ "$PHASE" == source_change ]]; then
+            test "$(git -C upstream rev-parse HEAD)" = "$HEAD_SHA"
+            test "$(git -C upstream rev-parse HEAD^)" = "$BASE_SHA"
+            while IFS= read -r -d '' changed; do
+              test -f "upstream/$changed"
+              touch "upstream/$changed"
+            done < <(git -C upstream diff --name-only -z "$BASE_SHA" "$HEAD_SHA")
+          fi
+          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
       - name: Start the cache and build timer
         id: timer
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
