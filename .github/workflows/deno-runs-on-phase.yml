@@ -13,6 +13,22 @@ on:
         required: false
         type: string
         default: target
+      source_sha:
+        required: false
+        type: string
+        default: ""
+      expected_parent:
+        required: false
+        type: string
+        default: ""
+      rolling_step:
+        required: false
+        type: string
+        default: ""
+      rolling_previous:
+        required: false
+        type: string
+        default: ""
       cli_version:
         required: false
         type: string
@@ -54,15 +70,23 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
-          ref: ${{ inputs.phase == 'source_change' && steps.source.outputs.DENO_HEAD_SHA || steps.source.outputs.DENO_BASE_SHA }}
+          ref: ${{ inputs.source_sha != '' && inputs.source_sha || (inputs.phase == 'source_change' && steps.source.outputs.DENO_HEAD_SHA || steps.source.outputs.DENO_BASE_SHA) }}
           path: upstream
           fetch-depth: 5
           submodules: false
       - name: Prepare the exact source
         env:
           PHASE: ${{ inputs.phase }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          EXPECTED_PARENT: ${{ inputs.expected_parent }}
         run: |
-          if [[ "$PHASE" == source_change ]]; then
+          set -euo pipefail
+          if [[ -n "$SOURCE_SHA" ]]; then
+            test "$(git -C upstream rev-parse HEAD)" = "$SOURCE_SHA"
+            if [[ -n "$EXPECTED_PARENT" ]]; then
+              test "$(git -C upstream rev-parse HEAD^)" = "$EXPECTED_PARENT"
+            fi
+          elif [[ "$PHASE" == source_change ]]; then
             ./scripts/prepare-source.sh head
           else
             ./scripts/prepare-source.sh base
@@ -91,6 +115,7 @@ jobs:
       - name: Select the same Cargo commands and a fresh cache cohort
         env:
           CACHE_VARIANT: ${{ inputs.cache_variant }}
+          ROLLING_STEP: ${{ inputs.rolling_step }}
         run: |
           set -euo pipefail
           case "$CACHE_VARIANT" in
@@ -101,13 +126,38 @@ jobs:
           esac
           sed -i 's|^workspace = ".*"|workspace = "boringcache/benchmark-runs-on-s3-clean"|' .boringcache.toml
           python3 ./scripts/select-deno-cargo-profile.py "$profile"
-          ./scripts/scope-boringcache-run.sh "r$GITHUB_RUN_ID-a$GITHUB_RUN_ATTEMPT" "$profile"
+          scope="r$GITHUB_RUN_ID-a$GITHUB_RUN_ATTEMPT"
+          if [[ -n "$ROLLING_STEP" ]]; then
+            test "$CACHE_VARIANT" = sccache-only
+            scope="$scope-roll11"
+          fi
+          ./scripts/scope-boringcache-run.sh "$scope" "$profile"
           sed -i "/^\[adapters.cargo\]$/a compiler-cache = \"$compiler_cache\"" .boringcache.toml
           test ! -e upstream/target
           test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
       - name: Start the cache and build timer
         id: timer
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+      - name: Name Magic Cache keys
+        id: magic_keys
+        env:
+          CACHE_VARIANT: ${{ inputs.cache_variant }}
+          PHASE: ${{ inputs.phase }}
+          ROLLING_STEP: ${{ inputs.rolling_step }}
+          ROLLING_PREVIOUS: ${{ inputs.rolling_previous }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$ROLLING_STEP" ]]; then
+            prefix="deno-magic-roll11-r$GITHUB_RUN_ID-a$GITHUB_RUN_ATTEMPT"
+            echo "restore=$prefix-step$ROLLING_PREVIOUS" >> "$GITHUB_OUTPUT"
+            echo "save=$prefix-step$ROLLING_STEP" >> "$GITHUB_OUTPUT"
+          else
+            prefix="deno-magic-$CACHE_VARIANT-r$GITHUB_RUN_ID-a$GITHUB_RUN_ATTEMPT"
+            previous=warm
+            [[ "$PHASE" != warm ]] || previous=cold
+            echo "restore=$prefix-$previous" >> "$GITHUB_OUTPUT"
+            echo "save=$prefix-$PHASE" >> "$GITHUB_OUTPUT"
+          fi
       - name: Restore RunsOn Magic Cache
         id: magic_restore
         if: inputs.provider == 'runs-on-cache' && inputs.phase != 'cold' && inputs.cache_variant != 'sccache-only'
@@ -118,7 +168,7 @@ jobs:
             ~/.cargo/git
             upstream/target
             sccache-cache
-          key: deno-magic-${{ inputs.cache_variant }}-r${{ github.run_id }}-a${{ github.run_attempt }}-${{ inputs.phase == 'warm' && 'cold' || 'warm' }}
+          key: ${{ steps.magic_keys.outputs.restore }}
           fail-on-cache-miss: true
       - name: Restore RunsOn Magic compiler cache
         id: magic_compiler_restore
@@ -129,7 +179,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             sccache-cache
-          key: deno-magic-${{ inputs.cache_variant }}-r${{ github.run_id }}-a${{ github.run_attempt }}-${{ inputs.phase == 'warm' && 'cold' || 'warm' }}
+          key: ${{ steps.magic_keys.outputs.restore }}
           fail-on-cache-miss: true
       - name: Record cache setup time
         id: setup_timer
@@ -147,6 +197,7 @@ jobs:
           trust-policy: publish
           working-directory: upstream
           fail-on-cache-error: true
+          diagnostics: summary
       - name: Build Deno release binaries with RunsOn Magic Cache
         if: inputs.provider == 'runs-on-cache'
         working-directory: upstream
@@ -174,6 +225,7 @@ jobs:
           trust-policy: publish
           working-directory: upstream
           fail-on-cache-error: true
+          diagnostics: summary
       - name: Build denort_desktop with RunsOn Magic Cache
         if: inputs.provider == 'runs-on-cache'
         working-directory: upstream
@@ -203,7 +255,7 @@ jobs:
             ~/.cargo/git
             upstream/target
             sccache-cache
-          key: deno-magic-${{ inputs.cache_variant }}-r${{ github.run_id }}-a${{ github.run_attempt }}-${{ inputs.phase }}
+          key: ${{ steps.magic_keys.outputs.save }}
       - name: Save RunsOn Magic compiler cache
         if: inputs.provider == 'runs-on-cache' && inputs.cache_variant == 'sccache-only'
         uses: actions/cache/save@v4
@@ -212,7 +264,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             sccache-cache
-          key: deno-magic-${{ inputs.cache_variant }}-r${{ github.run_id }}-a${{ github.run_attempt }}-${{ inputs.phase }}
+          key: ${{ steps.magic_keys.outputs.save }}
       - name: Verify release binaries and cache reuse
         env:
           PROVIDER: ${{ inputs.provider }}
@@ -235,9 +287,10 @@ jobs:
       - name: Write phase evidence
         env:
           PROVIDER: ${{ inputs.provider }}
-          PHASE: ${{ inputs.phase }}
-          LANE: ${{ inputs.cache_variant == 'target' && 'fresh' || inputs.cache_variant }}
-          SOURCE_SHA: ${{ inputs.phase == 'source_change' && steps.source.outputs.DENO_HEAD_SHA || steps.source.outputs.DENO_BASE_SHA }}
+          PHASE: ${{ inputs.rolling_step != '' && 'commit' || inputs.phase }}
+          LANE: ${{ inputs.rolling_step != '' && 'rolling' || (inputs.cache_variant == 'target' && 'fresh' || inputs.cache_variant) }}
+          VARIANT: ${{ inputs.rolling_step != '' && format('step{0}{1}', inputs.rolling_step, inputs.phase == 'warm' && '-warm' || '') || '' }}
+          SOURCE_SHA: ${{ inputs.source_sha != '' && inputs.source_sha || (inputs.phase == 'source_change' && steps.source.outputs.DENO_HEAD_SHA || steps.source.outputs.DENO_BASE_SHA) }}
           STARTED_AT: ${{ steps.timer.outputs.started_at }}
           WORKFLOW_STARTED_AT: ${{ steps.workflow_timer.outputs.started_at }}
           SETUP_SECONDS: ${{ inputs.provider == 'runs-on-cache' && steps.setup_timer.outputs.seconds || '0' }}
@@ -251,6 +304,7 @@ jobs:
             --strategy "$PROVIDER" \
             --lane "$LANE" \
             --phase "$PHASE" \
+            --variant "$VARIANT" \
             --mode cargo \
             --restore-or-setup-seconds "$SETUP_SECONDS" \
             --build-seconds "$(( $(date +%s) - STARTED_AT - SETUP_SECONDS ))" \
@@ -261,6 +315,6 @@ jobs:
             --evidence "$EVIDENCE_PATH"
       - uses: actions/upload-artifact@v6
         with:
-          name: phase-deno-runson-${{ inputs.provider }}-${{ inputs.phase }}
+          name: phase-deno-runson-${{ inputs.provider }}-${{ inputs.rolling_step != '' && format('step{0}', inputs.rolling_step) || inputs.phase }}
           path: benchmark-results/
           if-no-files-found: error
