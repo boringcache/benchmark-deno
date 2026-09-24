@@ -77,11 +77,12 @@ jobs:
           test "$(grep -c '>/dev/null 2>&1$' scripts/setup-deno-linux.sh)" -eq 2
           sed -i 's@>/dev/null 2>&1$@>/dev/null 2>\&1 || true@' scripts/setup-deno-linux.sh
           ./scripts/setup-deno-linux.sh
-          ./scripts/configure-deno-frame-pointers.sh
+      - name: Configure Deno frame pointers
+        run: ./scripts/configure-deno-frame-pointers.sh
       - name: Select the same Cargo commands and a fresh cache cohort
         run: |
           set -euo pipefail
-          sed -i 's|^workspace = ".*"|workspace = "boringcache/benchmark-runs-on-s3"|' .boringcache.toml
+          sed -i 's|^workspace = ".*"|workspace = "boringcache/benchmark-runs-on-s3-clean"|' .boringcache.toml
           python3 ./scripts/select-deno-cargo-profile.py cargo-product
           ./scripts/scope-boringcache-run.sh "r$GITHUB_RUN_ID-a$GITHUB_RUN_ATTEMPT" cargo-product
           sed -i '/^\[adapters.cargo\]$/a compiler-cache = "none"' .boringcache.toml
