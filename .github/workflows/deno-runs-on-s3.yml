@@ -33,7 +33,7 @@ jobs:
   publish-base:
     name: BoringCache Deno Cargo cold
     if: github.ref_name == 'main'
-    runs-on: runs-on=${{ github.run_id }}/cpu=16/ram=64/family=m7i.*+m7a/image=ubuntu24-full-x64/volume=300gb:gp3/env=benchmark/region=us-east-1
+    runs-on: runs-on=${{ github.run_id }}/cpu=16/ram=64/family=m7i.*+m7a/image=ubuntu24-full-x64/volume=300gb:gp3/env=benchmark/region=us-east-1/spot=false
     timeout-minutes: 240
     outputs:
       base_sha: ${{ steps.source.outputs.DENO_BASE_SHA }}
@@ -108,7 +108,11 @@ jobs:
           command -v dpkg && dpkg -l || echo 'No dpkg found or bad executable'
 
       - name: Configure Deno Linux build environment
-        run: ./scripts/setup-deno-linux.sh
+        run: |
+          set -euo pipefail
+          test "$(grep -c '>/dev/null 2>&1$' scripts/setup-deno-linux.sh)" -eq 2
+          sed -i 's|>/dev/null 2>&1$|>/dev/null 2>&1 || true|' scripts/setup-deno-linux.sh
+          ./scripts/setup-deno-linux.sh
 
       - name: Select Cargo cache layers
         run: python3 ./scripts/select-deno-cargo-profile.py "$CACHE_PROFILE"
@@ -181,7 +185,7 @@ jobs:
   consume-head:
     name: BoringCache Deno Cargo warm
     needs: publish-base
-    runs-on: runs-on=${{ github.run_id }}/cpu=16/ram=64/family=m7i.*+m7a/image=ubuntu24-full-x64/volume=300gb:gp3/env=benchmark/region=us-east-1
+    runs-on: runs-on=${{ github.run_id }}/cpu=16/ram=64/family=m7i.*+m7a/image=ubuntu24-full-x64/volume=300gb:gp3/env=benchmark/region=us-east-1/spot=false
     timeout-minutes: 240
     steps:
       - name: Configure git
@@ -255,7 +259,11 @@ jobs:
           command -v dpkg && dpkg -l || echo 'No dpkg found or bad executable'
 
       - name: Configure Deno Linux build environment
-        run: ./scripts/setup-deno-linux.sh
+        run: |
+          set -euo pipefail
+          test "$(grep -c '>/dev/null 2>&1$' scripts/setup-deno-linux.sh)" -eq 2
+          sed -i 's|>/dev/null 2>&1$|>/dev/null 2>&1 || true|' scripts/setup-deno-linux.sh
+          ./scripts/setup-deno-linux.sh
 
       - name: Select Cargo cache layers
         run: python3 ./scripts/select-deno-cargo-profile.py "$CACHE_PROFILE"
