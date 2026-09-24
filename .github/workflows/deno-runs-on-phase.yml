@@ -124,7 +124,7 @@ jobs:
         run: echo "seconds=$(( $(date +%s) - ${{ steps.timer.outputs.started_at }} ))" >> "$GITHUB_OUTPUT"
       - name: Explain Cargo fingerprint invalidation
         if: inputs.cache_variant == 'target-sccache' && inputs.phase == 'warm'
-        run: echo 'CARGO_LOG=cargo::core::compiler::fingerprint=info' >> "$GITHUB_ENV"
+        run: echo 'CARGO_LOG=cargo::core::compiler::fingerprint=trace' >> "$GITHUB_ENV"
       - name: Build Deno release binaries with BoringCache
         id: boringcache_primary
         if: inputs.provider == 'boringcache'
