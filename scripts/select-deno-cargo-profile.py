@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PROFILES = ("cargo-product", "compiler-only")
+PROFILES = ("cargo-product", "sccache-only", "compiler-only")
 
 
 def select_profile(path: Path, profile: str) -> None:
@@ -23,7 +23,7 @@ def select_profile(path: Path, profile: str) -> None:
 def main() -> int:
     if len(sys.argv) not in (2, 3):
         print(
-            "Usage: select-deno-cargo-profile.py cargo-product|compiler-only [.boringcache.toml]",
+            "Usage: select-deno-cargo-profile.py cargo-product|sccache-only|compiler-only [.boringcache.toml]",
             file=sys.stderr,
         )
         return 2

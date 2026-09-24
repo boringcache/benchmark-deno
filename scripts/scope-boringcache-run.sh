@@ -12,6 +12,7 @@ fi
 
 case "$profile" in
   cargo-product) ;;
+  sccache-only) scope="${scope}-sccache-only" ;;
   compiler-only) scope="${scope}-compiler-only" ;;
   *)
     echo "Unknown Deno Cargo cache profile: ${profile}" >&2

@@ -17,6 +17,9 @@ path = "upstream/target"
 [profiles.cargo-product]
 entries = ["cargo-registry-cache", "cargo-registry-index", "cargo-git-db", "cargo-target"]
 
+[profiles.sccache-only]
+entries = ["cargo-registry-cache", "cargo-registry-index", "cargo-git-db"]
+
 [profiles.compiler-only]
 entries = []
 
