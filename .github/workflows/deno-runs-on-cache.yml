@@ -1,0 +1,88 @@
+name: Deno RunsOn cache comparison
+run-name: Deno RunsOn Magic Cache vs BoringCache
+
+on:
+  workflow_dispatch:
+    inputs:
+      cli_version:
+        description: Optional exact BoringCache CLI release tag.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  actions: write
+  id-token: write
+
+concurrency:
+  group: deno-runs-on-cache-comparison
+  cancel-in-progress: false
+
+jobs:
+  magic-cold:
+    uses: ./.github/workflows/deno-runs-on-phase.yml
+    with:
+      provider: runs-on-cache
+      phase: cold
+
+  boringcache-cold:
+    uses: ./.github/workflows/deno-runs-on-phase.yml
+    with:
+      provider: boringcache
+      phase: cold
+      cli_version: ${{ inputs.cli_version }}
+
+  magic-warm:
+    needs: magic-cold
+    uses: ./.github/workflows/deno-runs-on-phase.yml
+    with:
+      provider: runs-on-cache
+      phase: warm
+
+  boringcache-warm:
+    needs: boringcache-cold
+    uses: ./.github/workflows/deno-runs-on-phase.yml
+    with:
+      provider: boringcache
+      phase: warm
+      cli_version: ${{ inputs.cli_version }}
+
+  magic-source-change:
+    needs: magic-warm
+    uses: ./.github/workflows/deno-runs-on-phase.yml
+    with:
+      provider: runs-on-cache
+      phase: source_change
+
+  boringcache-source-change:
+    needs: boringcache-warm
+    uses: ./.github/workflows/deno-runs-on-phase.yml
+    with:
+      provider: boringcache
+      phase: source_change
+      cli_version: ${{ inputs.cli_version }}
+
+  report:
+    name: Compare cache phases
+    needs: [magic-source-change, boringcache-source-change]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: phase-deno-runson-*
+          path: phase-evidence
+      - name: Summarize comparable work
+        run: |
+          python3 ./scripts/benchmark-report.py summarize \
+            --title "Deno RunsOn Magic Cache and BoringCache" \
+            --baseline-strategy runs-on-cache \
+            --no-deltas \
+            --input-dir phase-evidence \
+            --output-dir benchmark-results
+      - uses: actions/upload-artifact@v6
+        with:
+          name: deno-runson-cache-comparison
+          path: benchmark-results/
+          if-no-files-found: error

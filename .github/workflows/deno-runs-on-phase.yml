@@ -1,0 +1,209 @@
+name: Deno RunsOn cache phase
+
+on:
+  workflow_call:
+    inputs:
+      provider:
+        required: true
+        type: string
+      phase:
+        required: true
+        type: string
+      cli_version:
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  actions: write
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+  RUST_LIB_BACKTRACE: "0"
+  DENO_CANARY: "true"
+  DENO_SNAPSHOT_MINIFY_SOURCES: "1"
+  BORINGCACHE_TOKEN_FILE: /dev/null
+  BORINGCACHE_NO_GIT: "true"
+
+jobs:
+  build:
+    name: ${{ inputs.provider }} ${{ inputs.phase }}
+    runs-on: ${{ inputs.provider == 'runs-on-cache' && format('runs-on={0}/cpu=16/ram=64/family=m7i.*+m7a/image=ubuntu24-full-x64/volume=300gb:gp3/env=benchmark/region=us-east-1/spot=false/extras=s3-cache', github.run_id) || format('runs-on={0}/cpu=16/ram=64/family=m7i.*+m7a/image=ubuntu24-full-x64/volume=300gb:gp3/env=benchmark/region=us-east-1/spot=false', github.run_id) }}
+    timeout-minutes: 240
+    steps:
+      - uses: runs-on/action@efac073ea2507ec18797de3a81704201ade11d9d # v2.3.1
+      - name: Start the workflow timer
+        id: workflow_timer
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+      - name: Configure git
+        run: |
+          git config --global core.symlinks true
+          git config --global fetch.parallel 32
+      - uses: actions/checkout@v6
+      - name: Read pinned Deno source
+        id: source
+        run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
+      - name: Checkout pinned Deno source
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
+          ref: ${{ inputs.phase == 'source_change' && steps.source.outputs.DENO_HEAD_SHA || steps.source.outputs.DENO_BASE_SHA }}
+          path: upstream
+          fetch-depth: 5
+          submodules: false
+      - name: Prepare the exact source
+        env:
+          PHASE: ${{ inputs.phase }}
+        run: |
+          if [[ "$PHASE" == source_change ]]; then
+            ./scripts/prepare-source.sh head
+          else
+            ./scripts/prepare-source.sh base
+          fi
+          git -C upstream submodule update --init --recursive --depth=1 -- ./tests/util/std
+          ./scripts/verify-deno-release-recipe.py upstream
+      - uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
+        with:
+          deno-version: v2.x
+      - run: ./scripts/preinstall-deno-rustup.sh
+      - run: ln -s upstream/rust-toolchain.toml rust-toolchain.toml
+      - uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621
+      - name: Configure Deno Linux release environment
+        run: |
+          set -euo pipefail
+          test "$(grep -c '>/dev/null 2>&1$' scripts/setup-deno-linux.sh)" -eq 2
+          sed -i 's@>/dev/null 2>&1$@>/dev/null 2>\&1 || true@' scripts/setup-deno-linux.sh
+          ./scripts/setup-deno-linux.sh
+          ./scripts/configure-deno-frame-pointers.sh
+      - name: Select the same Cargo commands and a fresh cache cohort
+        run: |
+          set -euo pipefail
+          sed -i 's|^workspace = ".*"|workspace = "boringcache/benchmark-runs-on-s3"|' .boringcache.toml
+          python3 ./scripts/select-deno-cargo-profile.py cargo-product
+          ./scripts/scope-boringcache-run.sh "r$GITHUB_RUN_ID-a$GITHUB_RUN_ATTEMPT" cargo-product
+          sed -i '/^\[adapters.cargo\]$/a compiler-cache = "none"' .boringcache.toml
+          test ! -e upstream/target
+          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
+      - name: Start the cache and build timer
+        id: timer
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+      - name: Restore RunsOn Magic Cache
+        id: magic_restore
+        if: inputs.provider == 'runs-on-cache' && inputs.phase != 'cold'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            upstream/target
+          key: deno-magic-r${{ github.run_id }}-a${{ github.run_attempt }}-${{ inputs.phase == 'warm' && 'cold' || 'warm' }}
+          fail-on-cache-miss: true
+      - name: Record cache setup time
+        id: setup_timer
+        run: echo "seconds=$(( $(date +%s) - ${{ steps.timer.outputs.started_at }} ))" >> "$GITHUB_OUTPUT"
+      - name: Build Deno release binaries with BoringCache
+        id: boringcache_primary
+        if: inputs.provider == 'boringcache'
+        uses: boringcache/one@476c7df90bc1e7c2c4066aa7eb31cc057ef7f8d1 # v1 / 1.32.0
+        with:
+          cli-version: ${{ inputs.cli_version }}
+          mode: cargo
+          trust-policy: publish
+          working-directory: upstream
+          fail-on-cache-error: true
+      - name: Build Deno release binaries with RunsOn Magic Cache
+        if: inputs.provider == 'runs-on-cache'
+        working-directory: upstream
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          import tomllib
+          with open("../.boringcache.toml", "rb") as source:
+              command = tomllib.load(source)["adapters"]["cargo"]["command"]
+          subprocess.run(command, check=True)
+          PY
+      - name: Select the denort_desktop release command
+        run: ./scripts/select-deno-cargo-phase.py desktop
+      - name: Build denort_desktop with BoringCache
+        id: boringcache_desktop
+        if: inputs.provider == 'boringcache'
+        uses: boringcache/one@476c7df90bc1e7c2c4066aa7eb31cc057ef7f8d1 # v1 / 1.32.0
+        with:
+          cli-version: ${{ inputs.cli_version }}
+          mode: cargo
+          trust-policy: publish
+          working-directory: upstream
+          fail-on-cache-error: true
+      - name: Build denort_desktop with RunsOn Magic Cache
+        if: inputs.provider == 'runs-on-cache'
+        working-directory: upstream
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          import tomllib
+          with open("../.boringcache.toml", "rb") as source:
+              command = tomllib.load(source)["adapters"]["cargo"]["command"]
+          subprocess.run(command, check=True)
+          PY
+      - name: Save RunsOn Magic Cache
+        if: inputs.provider == 'runs-on-cache'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            upstream/target
+          key: deno-magic-r${{ github.run_id }}-a${{ github.run_attempt }}-${{ inputs.phase }}
+      - name: Verify release binaries and cache reuse
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          PHASE: ${{ inputs.phase }}
+          MAGIC_HIT: ${{ steps.magic_restore.outputs.cache-hit }}
+          BORINGCACHE_HIT: ${{ steps.boringcache_primary.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          test -x upstream/target/release/deno
+          test -x upstream/target/release/denort
+          test -x upstream/target/release/test_server
+          test -s upstream/target/release/libdenort.so
+          if [[ "$PHASE" != cold ]]; then
+            if [[ "$PROVIDER" == runs-on-cache ]]; then
+              test "$MAGIC_HIT" = true
+            else
+              test "$BORINGCACHE_HIT" = true
+            fi
+          fi
+      - name: Write phase evidence
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          PHASE: ${{ inputs.phase }}
+          SOURCE_SHA: ${{ inputs.phase == 'source_change' && steps.source.outputs.DENO_HEAD_SHA || steps.source.outputs.DENO_BASE_SHA }}
+          STARTED_AT: ${{ steps.timer.outputs.started_at }}
+          WORKFLOW_STARTED_AT: ${{ steps.workflow_timer.outputs.started_at }}
+          SETUP_SECONDS: ${{ inputs.provider == 'runs-on-cache' && steps.setup_timer.outputs.seconds || '0' }}
+          CACHE_HIT: ${{ inputs.provider == 'runs-on-cache' && steps.magic_restore.outputs.cache-hit || steps.boringcache_primary.outputs.cache-hit }}
+          EVIDENCE_PATH: ${{ steps.boringcache_primary.outputs.evidence-path }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 ./scripts/benchmark-report.py phase \
+            --benchmark deno-runson \
+            --strategy "$PROVIDER" \
+            --lane fresh \
+            --phase "$PHASE" \
+            --mode cargo \
+            --restore-or-setup-seconds "$SETUP_SECONDS" \
+            --build-seconds "$(( $(date +%s) - STARTED_AT - SETUP_SECONDS ))" \
+            --workflow-seconds "$(( $(date +%s) - WORKFLOW_STARTED_AT ))" \
+            --cache-hit "$CACHE_HIT" \
+            --source-repository denoland/deno \
+            --source-sha "$SOURCE_SHA" \
+            --evidence "$EVIDENCE_PATH"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: phase-deno-runson-${{ inputs.provider }}-${{ inputs.phase }}
+          path: benchmark-results/
+          if-no-files-found: error
