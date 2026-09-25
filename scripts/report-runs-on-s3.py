@@ -37,6 +37,7 @@ def metrics_shape(bucket: str, key: str) -> dict:
         fields: set[str] = set()
         nested_fields: dict[str, set[str]] = {}
         kinds: set[str] = set()
+        metric_shapes: dict[str, list[str]] = {}
         sampled = 0
         with path.open() as source:
             for line in source:
@@ -52,11 +53,16 @@ def metrics_shape(bucket: str, key: str) -> dict:
                         nested_fields.setdefault(name, set()).update(value)
                     elif name in ("name", "metric", "type") and isinstance(value, str):
                         kinds.add(value)
+                for resource in record.get("resourceMetrics", []):
+                    for scope in resource.get("scopeMetrics", []):
+                        for metric in scope.get("metrics", []):
+                            metric_shapes[metric["name"]] = sorted(metric)
         return {
             "sampled_records": sampled,
             "fields": sorted(fields),
             "nested_fields": {name: sorted(values) for name, values in nested_fields.items()},
             "kinds": sorted(kinds)[:50],
+            "metric_shapes": metric_shapes,
         }
 
 
@@ -123,7 +129,21 @@ def main() -> int:
     except (OSError, subprocess.CalledProcessError, ValueError):
         report["cache_tree_status"] = "unavailable"
     else:
-        report.update(cache_tree_status="available", cache_tree_objects=len(cache_tree), cache_tree_bytes=size_of(cache_tree))
+        groups: dict[str, dict[str, int]] = {}
+        for item in cache_tree:
+            group = "/".join(item["Key"].split("/")[:4])
+            totals = groups.setdefault(group, {"objects": 0, "bytes": 0})
+            totals["objects"] += 1
+            totals["bytes"] += item["Size"]
+        report.update(
+            cache_tree_status="available",
+            cache_tree_objects=len(cache_tree),
+            cache_tree_bytes=size_of(cache_tree),
+            cache_tree_largest_prefixes=[
+                {"prefix": group, **totals}
+                for group, totals in sorted(groups.items(), key=lambda pair: pair[1]["bytes"], reverse=True)[:25]
+            ],
+        )
 
     try:
         bucket_objects = objects_in(bucket, "")
