@@ -1,5 +1,5 @@
-name: Deno RunsOn 10-commit rolling comparison
-run-name: Deno 10 commits (${{ inputs.cache_variant }}) and final same-revision warm run
+name: Deno RunsOn rolling comparison
+run-name: Deno ${{ inputs.commit_count }} commits (${{ inputs.cache_variant }}) and final same-revision warm run
 
 on:
   workflow_dispatch:
@@ -10,6 +10,12 @@ on:
         type: choice
         options: [sccache-only, target, target-sccache]
         default: sccache-only
+      commit_count:
+        description: Number of source commits before the final warm build.
+        required: true
+        type: choice
+        options: ["5", "10"]
+        default: "10"
       cli_version:
         description: Optional exact BoringCache CLI release tag.
         required: false
@@ -27,7 +33,7 @@ concurrency:
 
 jobs:
   source:
-    name: Resolve ten first-parent source commits
+    name: Resolve first-parent source commits
     runs-on: ubuntu-24.04
     outputs:
       shas: ${{ steps.commits.outputs.shas }}
@@ -39,12 +45,13 @@ jobs:
           set -euo pipefail
           source benchmark-source.env
           head="$DENO_HEAD_SHA"
+          count="${{ inputs.commit_count }}"
           git init "$RUNNER_TEMP/source"
           git -C "$RUNNER_TEMP/source" remote add origin https://github.com/denoland/deno.git
-          git -C "$RUNNER_TEMP/source" fetch --no-tags --filter=blob:none --depth=11 origin "$head"
-          mapfile -t shas < <(git -C "$RUNNER_TEMP/source" rev-list --first-parent --max-count=10 "$head" | tac)
-          test "${#shas[@]}" -eq 10
-          test "${shas[9]}" = "$head"
+          git -C "$RUNNER_TEMP/source" fetch --no-tags --filter=blob:none --depth="$(( count + 1 ))" origin "$head"
+          mapfile -t shas < <(git -C "$RUNNER_TEMP/source" rev-list --first-parent --max-count="$count" "$head" | tac)
+          test "${#shas[@]}" -eq "$count"
+          test "${shas[count - 1]}" = "$head"
           echo "shas=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "${shas[@]}")" >> "$GITHUB_OUTPUT"
           printf "%s\n" "${shas[@]}"
 
@@ -156,16 +163,17 @@ jobs:
     uses: ./.github/workflows/deno-runs-on-phase.yml
     with:
       provider: ${{ matrix.provider }}
-      phase: source_change
+      phase: ${{ inputs.commit_count == '5' && 'warm' || 'source_change' }}
       cache_variant: ${{ inputs.cache_variant }}
-      source_sha: ${{ fromJSON(needs.source.outputs.shas)[5] }}
-      expected_parent: ${{ fromJSON(needs.source.outputs.shas)[4] }}
+      source_sha: ${{ inputs.commit_count == '5' && fromJSON(needs.source.outputs.shas)[4] || fromJSON(needs.source.outputs.shas)[5] }}
+      expected_parent: ${{ inputs.commit_count == '5' && fromJSON(needs.source.outputs.shas)[3] || fromJSON(needs.source.outputs.shas)[4] }}
       rolling_step: "05"
       rolling_previous: "04"
       cli_version: ${{ inputs.cli_version }}
 
   step06:
     needs: [source, step05]
+    if: inputs.commit_count == '10'
     strategy:
       fail-fast: false
       matrix:
@@ -183,6 +191,7 @@ jobs:
 
   step07:
     needs: [source, step06]
+    if: inputs.commit_count == '10'
     strategy:
       fail-fast: false
       matrix:
@@ -200,6 +209,7 @@ jobs:
 
   step08:
     needs: [source, step07]
+    if: inputs.commit_count == '10'
     strategy:
       fail-fast: false
       matrix:
@@ -217,6 +227,7 @@ jobs:
 
   step09:
     needs: [source, step08]
+    if: inputs.commit_count == '10'
     strategy:
       fail-fast: false
       matrix:
@@ -234,6 +245,7 @@ jobs:
 
   step10:
     needs: [source, step09]
+    if: inputs.commit_count == '10'
     strategy:
       fail-fast: false
       matrix:
@@ -249,8 +261,9 @@ jobs:
       cli_version: ${{ inputs.cli_version }}
 
   report:
-    name: Compare all eleven builds
-    needs: step10
+    name: Compare the rolling builds
+    needs: [step05, step10]
+    if: always() && needs.step05.result == 'success' && (inputs.commit_count == '5' || needs.step10.result == 'success')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -261,14 +274,14 @@ jobs:
       - name: Summarize the rolling sequence
         run: |
           python3 ./scripts/benchmark-report.py summarize \
-            --title "Deno 10-commit RunsOn ${{ inputs.cache_variant }} rolling comparison" \
+            --title "Deno ${{ inputs.commit_count }}-commit RunsOn ${{ inputs.cache_variant }} rolling comparison" \
             --baseline-strategy runs-on-cache \
             --no-deltas \
             --input-dir phase-evidence \
             --output-dir benchmark-results
       - uses: actions/upload-artifact@v6
         with:
-          name: deno-runson-rolling11-comparison
+          name: deno-runson-rolling-comparison
           path: benchmark-results/
           if-no-files-found: error
 
