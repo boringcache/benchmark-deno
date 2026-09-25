@@ -74,7 +74,7 @@ def main() -> None:
         if first is None or final is None:
             raise ValueError("Missing sccache statistics")
         location = final.get("cache_location")
-        if args.provider == "runs-on-cache" and (not isinstance(location, str) or "S3" not in location):
+        if args.provider == "runs-on-cache" and (not isinstance(location, str) or location.split(",", 1)[0].strip().lower() != "s3"):
             raise ValueError(f"RunsOn sccache did not select S3: {location}")
         sessions = [
             {"session": "primary", "compiler": compiler_observation(first, None)},
