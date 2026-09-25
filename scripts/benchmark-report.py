@@ -410,6 +410,7 @@ def write_phase(args: argparse.Namespace) -> int:
             "storage_source": measured_storage["source"] if measured_storage else None,
             "storage_breakdown": measured_storage.get("breakdown") if measured_storage else None,
             "target_restore_hit": compiler_evidence.get("target_restore_hit") if compiler_evidence else None,
+            "dependency_archive_hit": compiler_evidence.get("dependency_archive_hit") if compiler_evidence else None,
             "compiler_backend": compiler_evidence.get("compiler_backend") if compiler_evidence else None,
             "compiler_sessions": compiler_evidence.get("compiler_sessions") if compiler_evidence else None,
         },
@@ -679,8 +680,8 @@ def render_benchmark(
         lines.append("")
 
         if any(payload.get("cache", {}).get("compiler_sessions") is not None for payload in phases if payload["lane"] == lane):
-            lines.append("| Provider | Phase | Target restored | Compiler cache |")
-            lines.append("| --- | --- | --- | --- |")
+            lines.append("| Provider | Phase | Target restored | Dependency archive restored | Compiler cache |")
+            lines.append("| --- | --- | --- | --- | --- |")
             for phase_name in LANE_PHASES[lane]:
                 for strategy, variant in lane_providers:
                     payload = next((item for item in phases if item["strategy"] == strategy and (item.get("variant") or "") == variant and item["lane"] == lane and item["phase"] == phase_name), None)
@@ -688,7 +689,9 @@ def render_benchmark(
                         continue
                     restored = payload["cache"].get("target_restore_hit")
                     target_state = "yes" if restored is True else "no" if restored is False else "n/a"
-                    lines.append(f"| {provider_label(strategy, variant)} | {PHASE_LABELS[phase_name]} | {target_state} | {compiler_counts(payload)} |")
+                    dependency_hit = payload["cache"].get("dependency_archive_hit")
+                    dependency_state = "yes" if dependency_hit is True else "no" if dependency_hit is False else "n/a"
+                    lines.append(f"| {provider_label(strategy, variant)} | {PHASE_LABELS[phase_name]} | {target_state} | {dependency_state} | {compiler_counts(payload)} |")
             lines.append("")
 
         if baseline and candidate and show_deltas:

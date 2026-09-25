@@ -91,6 +91,7 @@ def main() -> None:
             "provider": args.provider,
             "cache_variant": args.cache_variant,
             "target_restore_hit": primary["target_cache_hit"] if args.cache_variant != "sccache-only" else None,
+            "dependency_archive_hit": None,
             "compiler_backend": "BoringCache WebDAV" if args.cache_variant != "target" else None,
             "compiler_sessions": [primary, desktop],
             "action_evidence": {"primary": primary_raw, "desktop": desktop_raw},
@@ -114,7 +115,8 @@ def main() -> None:
             "schema_version": 1,
             "provider": args.provider,
             "cache_variant": args.cache_variant,
-            "target_restore_hit": args.magic_hit == "true" if args.magic_hit else None,
+            "target_restore_hit": args.magic_hit == "true" if args.magic_hit and args.cache_variant != "sccache-only" else None,
+            "dependency_archive_hit": args.magic_hit == "true" if args.magic_hit and args.cache_variant == "sccache-only" else None,
             "compiler_backend": location,
             "compiler_sessions": sessions,
         }
