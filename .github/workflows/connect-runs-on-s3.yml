@@ -2,9 +2,16 @@ name: Connect Deno RunsOn S3 benchmark workspace
 
 on:
   workflow_dispatch:
+    inputs:
+      inspect_run_id:
+        description: Inspect cache storage for this Actions run ID instead of connecting the workspace.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
+  actions: write
   id-token: write
 
 env:
@@ -15,7 +22,7 @@ env:
 jobs:
   connect:
     name: Connect Deno to the S3 workspace
-    if: github.ref_name == 'main'
+    if: github.ref_name == 'main' && inputs.inspect_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -42,3 +49,22 @@ jobs:
           script --quiet --return --flush \
             --command 'boringcache ci connect --oidc-provider github-actions' \
             /dev/null
+
+  inspect:
+    name: Inspect RunsOn cache bucket
+    if: inputs.inspect_run_id != ''
+    runs-on: ${{ format('runs-on={0}/cpu=16/ram=64/family=m7i.*+m7a/image=ubuntu24-full-x64/volume=300gb:gp3/env=benchmark/region=us-east-1/spot=false/extras=s3-cache', github.run_id) }}
+    steps:
+      - uses: runs-on/action@efac073ea2507ec18797de3a81704201ade11d9d # v2.3.1
+      - uses: actions/checkout@v6
+      - name: Summarize cache objects
+        env:
+          INSPECT_RUN_ID: ${{ inputs.inspect_run_id }}
+        run: |
+          mkdir -p benchmark-results
+          python3 ./scripts/report-runs-on-s3.py after benchmark-results/bucket-inspection.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: deno-runson-bucket-inspection
+          path: benchmark-results/bucket-inspection.json
+          if-no-files-found: error

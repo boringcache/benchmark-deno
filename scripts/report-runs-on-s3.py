@@ -29,7 +29,7 @@ def main() -> int:
         print("Usage: report-runs-on-s3.py before|after OUTPUT.json", file=sys.stderr)
         return 2
 
-    run_id = os.environ["GITHUB_RUN_ID"]
+    run_id = os.environ.get("INSPECT_RUN_ID") or os.environ["GITHUB_RUN_ID"]
     bucket = os.environ.get("RUNS_ON_S3_BUCKET_CACHE", "")
     repo_prefix = os.environ.get("RUNS_ON_S3_CACHE_REPO_PREFIX", "")
     prefix = repo_prefix.rstrip("/") + "/" if repo_prefix else ""
@@ -37,6 +37,7 @@ def main() -> int:
         "snapshot": sys.argv[1],
         "observed_at": datetime.now(timezone.utc).isoformat(),
         "run_id": run_id,
+        "observation_run_id": os.environ["GITHUB_RUN_ID"],
         "bucket": bucket,
         "cache_prefix": prefix,
     }
@@ -74,6 +75,27 @@ def main() -> int:
             metrics_status="available",
             metrics_objects=len(metric_objects),
             metrics_bytes=size_of(metric_objects),
+        )
+
+    try:
+        bucket_objects = objects_in(bucket, "")
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        report["bucket_status"] = "unavailable"
+    else:
+        groups: dict[str, dict[str, int]] = {}
+        for item in bucket_objects:
+            group = "/".join(item["Key"].split("/")[:4])
+            totals = groups.setdefault(group, {"objects": 0, "bytes": 0})
+            totals["objects"] += 1
+            totals["bytes"] += item["Size"]
+        report.update(
+            bucket_status="available",
+            bucket_objects=len(bucket_objects),
+            bucket_bytes=size_of(bucket_objects),
+            largest_prefixes=[
+                {"prefix": group, **totals}
+                for group, totals in sorted(groups.items(), key=lambda pair: pair[1]["bytes"], reverse=True)[:25]
+            ],
         )
 
     Path(sys.argv[2]).write_text(json.dumps(report, indent=2) + "\n")
