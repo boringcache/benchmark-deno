@@ -17,6 +17,10 @@ on:
         required: false
         type: string
         default: ""
+      restore_phase:
+        required: false
+        type: string
+        default: ""
       expected_parent:
         required: false
         type: string
@@ -44,6 +48,7 @@ permissions:
   id-token: write
 
 env:
+  CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
   RUST_LIB_BACKTRACE: "0"
@@ -59,6 +64,8 @@ jobs:
     timeout-minutes: 240
     steps:
       - uses: runs-on/action@efac073ea2507ec18797de3a81704201ade11d9d # v2.3.1
+        with:
+          sccache: ${{ inputs.provider == 'runs-on-cache' && inputs.cache_variant != 'target' && 's3' || '' }}
       - name: Start the workflow timer
         id: workflow_timer
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
@@ -108,6 +115,24 @@ jobs:
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.17.0
+      - name: Scope RunsOn direct S3 compiler cache
+        if: inputs.provider == 'runs-on-cache' && inputs.cache_variant != 'target'
+        run: |
+          set -euo pipefail
+          test -n "${SCCACHE_BUCKET:-}"
+          test -n "${SCCACHE_REGION:-}"
+          export SCCACHE_S3_KEY_PREFIX="cache/sccache/benchmark-deno/${{ inputs.cache_variant }}/r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
+          echo "SCCACHE_S3_KEY_PREFIX=$SCCACHE_S3_KEY_PREFIX" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import json
+          import subprocess
+
+          stats = json.loads(subprocess.check_output(["sccache", "--show-stats", "--stats-format=json"]))
+          location = stats.get("cache_location")
+          if not isinstance(location, str) or "S3" not in location:
+              raise SystemExit(f"Expected direct S3 sccache backend, got {location!r}")
+          print("Direct S3 sccache backend is active")
+          PY
       - name: Configure Deno Linux release environment
         run: |
           set -euo pipefail
@@ -125,43 +150,21 @@ jobs:
           case "$CACHE_VARIANT" in
             target) compiler_cache=none; profile=cargo-product ;;
             target-sccache) compiler_cache=sccache; profile=cargo-product ;;
-            sccache-only) compiler_cache=sccache; profile=sccache-only ;;
+            sccache-only) compiler_cache=sccache; profile=compiler-only ;;
             *) echo "Unknown cache variant: $CACHE_VARIANT" >&2; exit 1 ;;
           esac
           sed -i 's|^workspace = ".*"|workspace = "boringcache/benchmark-runs-on-s3-clean"|' .boringcache.toml
           python3 ./scripts/select-deno-cargo-profile.py "$profile"
-          scope="r$GITHUB_RUN_ID-a$GITHUB_RUN_ATTEMPT"
+          scope="$CACHE_VARIANT-r$GITHUB_RUN_ID-a$GITHUB_RUN_ATTEMPT"
           if [[ -n "$ROLLING_STEP" ]]; then
-            test "$CACHE_VARIANT" = sccache-only
-            scope="$scope-roll11"
+            scope="$scope-rolling"
           fi
           ./scripts/scope-boringcache-run.sh "$scope" "$profile"
           sed -i "/^\[adapters.cargo\]$/a compiler-cache = \"$compiler_cache\"" .boringcache.toml
           test ! -e upstream/target
           test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
-      - name: Preserve restored target freshness
-        if: inputs.cache_variant != 'sccache-only'
-        env:
-          PHASE: ${{ inputs.phase }}
-          BASE_SHA: ${{ steps.source.outputs.DENO_BASE_SHA }}
-          HEAD_SHA: ${{ steps.source.outputs.DENO_HEAD_SHA }}
-        run: |
-          set -euo pipefail
-          test ! -e upstream/target
-          find upstream -path 'upstream/.git' -prune -o -type f -exec touch -d '@946684800' {} +
-          sysroot="$(cd upstream && rustc --print sysroot)"
-          std_source="$sysroot/lib/rustlib/src/rust/library"
-          test -d "$std_source"
-          find "$std_source" -type f -exec touch -d '@946684800' {} +
-          if [[ "$PHASE" == source_change ]]; then
-            test "$(git -C upstream rev-parse HEAD)" = "$HEAD_SHA"
-            test "$(git -C upstream rev-parse HEAD^)" = "$BASE_SHA"
-            while IFS= read -r -d '' changed; do
-              test -f "upstream/$changed"
-              touch "upstream/$changed"
-            done < <(git -C upstream diff --name-only -z "$BASE_SHA" "$HEAD_SHA")
-          fi
-          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
+      - name: Select the Cargo job lifecycle
+        run: python3 ./scripts/select-deno-cargo-phase.py job
       - name: Start the cache and build timer
         id: timer
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
@@ -172,15 +175,16 @@ jobs:
           PHASE: ${{ inputs.phase }}
           ROLLING_STEP: ${{ inputs.rolling_step }}
           ROLLING_PREVIOUS: ${{ inputs.rolling_previous }}
+          RESTORE_PHASE: ${{ inputs.restore_phase }}
         run: |
           set -euo pipefail
           if [[ -n "$ROLLING_STEP" ]]; then
-            prefix="deno-magic-roll11-r$GITHUB_RUN_ID-a$GITHUB_RUN_ATTEMPT"
+            prefix="deno-magic-$CACHE_VARIANT-rolling-r$GITHUB_RUN_ID-a$GITHUB_RUN_ATTEMPT"
             echo "restore=$prefix-step$ROLLING_PREVIOUS" >> "$GITHUB_OUTPUT"
             echo "save=$prefix-step$ROLLING_STEP" >> "$GITHUB_OUTPUT"
           else
             prefix="deno-magic-$CACHE_VARIANT-r$GITHUB_RUN_ID-a$GITHUB_RUN_ATTEMPT"
-            previous=warm
+            previous="${RESTORE_PHASE:-warm}"
             [[ "$PHASE" != warm ]] || previous=cold
             echo "restore=$prefix-$previous" >> "$GITHUB_OUTPUT"
             echo "save=$prefix-$PHASE" >> "$GITHUB_OUTPUT"
@@ -194,32 +198,17 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             upstream/target
-            sccache-cache
-          key: ${{ steps.magic_keys.outputs.restore }}
-          fail-on-cache-miss: true
-      - name: Restore RunsOn Magic compiler cache
-        id: magic_compiler_restore
-        if: inputs.provider == 'runs-on-cache' && inputs.phase != 'cold' && inputs.cache_variant == 'sccache-only'
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            sccache-cache
           key: ${{ steps.magic_keys.outputs.restore }}
           fail-on-cache-miss: true
       - name: Record cache setup time
         id: setup_timer
         run: echo "seconds=$(( $(date +%s) - ${{ steps.timer.outputs.started_at }} ))" >> "$GITHUB_OUTPUT"
-      - name: Explain Cargo fingerprint invalidation
-        if: inputs.cache_variant == 'target-sccache' && inputs.phase == 'warm'
-        run: echo 'CARGO_LOG=cargo::core::compiler::fingerprint=trace' >> "$GITHUB_ENV"
       - name: Enable sccache diagnostics
         if: inputs.sccache_diagnostics && inputs.provider == 'boringcache' && inputs.cache_variant == 'sccache-only'
         run: |
           echo "SCCACHE_ERROR_LOG=$RUNNER_TEMP/sccache-errors.log" >> "$GITHUB_ENV"
           echo 'SCCACHE_LOG=debug' >> "$GITHUB_ENV"
-      - name: Build Deno release binaries with BoringCache
+      - name: Restore BoringCache for both Cargo commands
         id: boringcache_primary
         if: inputs.provider == 'boringcache'
         uses: boringcache/one@476c7df90bc1e7c2c4066aa7eb31cc057ef7f8d1 # v1 / 1.32.0
@@ -230,57 +219,25 @@ jobs:
           working-directory: upstream
           fail-on-cache-error: true
           diagnostics: summary
-      - name: Build Deno release binaries with RunsOn Magic Cache
-        if: inputs.provider == 'runs-on-cache'
-        working-directory: upstream
+      - name: Build Deno release binaries
         env:
           RUSTC_WRAPPER: ${{ inputs.cache_variant != 'target' && 'sccache' || '' }}
-          SCCACHE_DIR: ${{ github.workspace }}/sccache-cache
-          SCCACHE_CACHE_SIZE: 10G
+        run: python3 ./scripts/select-deno-cargo-phase.py run primary
+      - name: Record primary compiler stats
+        if: inputs.cache_variant != 'target'
         run: |
-          python3 - <<'PY'
-          import subprocess
-          import tomllib
-          with open("../.boringcache.toml", "rb") as source:
-              command = tomllib.load(source)["adapters"]["cargo"]["command"]
-          subprocess.run(command, check=True)
-          PY
-      - name: Select the denort_desktop release command
-        run: ./scripts/select-deno-cargo-phase.py desktop
-      - name: Build denort_desktop with BoringCache
-        id: boringcache_desktop
-        if: inputs.provider == 'boringcache'
-        uses: boringcache/one@476c7df90bc1e7c2c4066aa7eb31cc057ef7f8d1 # v1 / 1.32.0
-        with:
-          cli-version: ${{ inputs.cli_version }}
-          mode: cargo
-          trust-policy: publish
-          working-directory: upstream
-          fail-on-cache-error: true
-          diagnostics: summary
-      - name: Build denort_desktop with RunsOn Magic Cache
-        if: inputs.provider == 'runs-on-cache'
-        working-directory: upstream
+          mkdir -p benchmark-results
+          sccache --show-stats --stats-format=json > benchmark-results/sccache-primary.json
+      - name: Build denort_desktop
         env:
           RUSTC_WRAPPER: ${{ inputs.cache_variant != 'target' && 'sccache' || '' }}
-          SCCACHE_DIR: ${{ github.workspace }}/sccache-cache
-          SCCACHE_CACHE_SIZE: 10G
-        run: |
-          python3 - <<'PY'
-          import subprocess
-          import tomllib
-          with open("../.boringcache.toml", "rb") as source:
-              command = tomllib.load(source)["adapters"]["cargo"]["command"]
-          subprocess.run(command, check=True)
-          PY
+        run: python3 ./scripts/select-deno-cargo-phase.py run desktop
+      - name: Record final compiler stats
+        if: inputs.cache_variant != 'target'
+        run: sccache --show-stats --stats-format=json > benchmark-results/sccache-final.json
       - name: Summarize sccache diagnostics
         if: always() && inputs.sccache_diagnostics && inputs.provider == 'boringcache'
         run: python3 ./scripts/summarize-sccache-errors.py "$RUNNER_TEMP/sccache-errors.log"
-      - name: Report Magic sccache stats
-        if: inputs.provider == 'runs-on-cache' && inputs.cache_variant != 'target'
-        env:
-          SCCACHE_DIR: ${{ github.workspace }}/sccache-cache
-        run: sccache --show-stats
       - name: Save RunsOn Magic Cache
         if: inputs.provider == 'runs-on-cache' && inputs.cache_variant != 'sccache-only'
         uses: actions/cache/save@v4
@@ -289,22 +246,13 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             upstream/target
-            sccache-cache
-          key: ${{ steps.magic_keys.outputs.save }}
-      - name: Save RunsOn Magic compiler cache
-        if: inputs.provider == 'runs-on-cache' && inputs.cache_variant == 'sccache-only'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            sccache-cache
           key: ${{ steps.magic_keys.outputs.save }}
       - name: Verify release binaries and cache reuse
         env:
           PROVIDER: ${{ inputs.provider }}
           PHASE: ${{ inputs.phase }}
-          MAGIC_HIT: ${{ inputs.cache_variant == 'sccache-only' && steps.magic_compiler_restore.outputs.cache-hit || steps.magic_restore.outputs.cache-hit }}
+          CACHE_VARIANT: ${{ inputs.cache_variant }}
+          MAGIC_HIT: ${{ steps.magic_restore.outputs.cache-hit }}
           BORINGCACHE_HIT: ${{ steps.boringcache_primary.outputs.cache-hit }}
         run: |
           set -euo pipefail
@@ -312,7 +260,7 @@ jobs:
           test -x upstream/target/release/denort
           test -x upstream/target/release/test_server
           test -s upstream/target/release/libdenort.so
-          if [[ "$PHASE" != cold ]]; then
+          if [[ "$PHASE" != cold && "$CACHE_VARIANT" != sccache-only ]]; then
             if [[ "$PROVIDER" == runs-on-cache ]]; then
               test "$MAGIC_HIT" = true
             else
@@ -329,11 +277,18 @@ jobs:
           STARTED_AT: ${{ steps.timer.outputs.started_at }}
           WORKFLOW_STARTED_AT: ${{ steps.workflow_timer.outputs.started_at }}
           SETUP_SECONDS: ${{ inputs.provider == 'runs-on-cache' && steps.setup_timer.outputs.seconds || '0' }}
-          CACHE_HIT: ${{ inputs.provider == 'runs-on-cache' && (inputs.cache_variant == 'sccache-only' && steps.magic_compiler_restore.outputs.cache-hit || steps.magic_restore.outputs.cache-hit) || steps.boringcache_primary.outputs.cache-hit }}
+          CACHE_HIT: ${{ inputs.provider == 'runs-on-cache' && steps.magic_restore.outputs.cache-hit || steps.boringcache_primary.outputs.cache-hit }}
           EVIDENCE_PATH: ${{ steps.boringcache_primary.outputs.evidence-path }}
+          MAGIC_HIT: ${{ steps.magic_restore.outputs.cache-hit }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          python3 ./scripts/collect-deno-cache-evidence.py \
+            --provider "$PROVIDER" \
+            --cache-variant "${{ inputs.cache_variant }}" \
+            --primary-evidence "$EVIDENCE_PATH" \
+            --magic-hit "$MAGIC_HIT" \
+            --output benchmark-results/cache-evidence.json
           python3 ./scripts/benchmark-report.py phase \
             --benchmark deno-runson \
             --strategy "$PROVIDER" \
@@ -347,7 +302,8 @@ jobs:
             --cache-hit "$CACHE_HIT" \
             --source-repository denoland/deno \
             --source-sha "$SOURCE_SHA" \
-            --evidence "$EVIDENCE_PATH"
+            --evidence "$EVIDENCE_PATH" \
+            --cache-evidence benchmark-results/cache-evidence.json
       - uses: actions/upload-artifact@v6
         with:
           name: phase-deno-runson-${{ inputs.provider }}-${{ inputs.rolling_step != '' && format('step{0}', inputs.rolling_step) || inputs.phase }}
