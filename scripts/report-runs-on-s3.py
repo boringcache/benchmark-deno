@@ -38,6 +38,7 @@ def metrics_shape(bucket: str, key: str) -> dict:
         nested_fields: dict[str, set[str]] = {}
         kinds: set[str] = set()
         metric_shapes: dict[str, list[str]] = {}
+        network_samples: list[dict] = []
         sampled = 0
         with path.open() as source:
             for line in source:
@@ -57,12 +58,29 @@ def metrics_shape(bucket: str, key: str) -> dict:
                     for scope in resource.get("scopeMetrics", []):
                         for metric in scope.get("metrics", []):
                             metric_shapes[metric["name"]] = sorted(metric)
+                            if metric["name"] == "system.network.io" and not network_samples:
+                                network_sum = metric.get("sum", {})
+                                for point in network_sum.get("dataPoints", [])[:4]:
+                                    network_samples.append(
+                                        {
+                                            "unit": metric.get("unit"),
+                                            "temporality": network_sum.get("aggregationTemporality"),
+                                            "monotonic": network_sum.get("isMonotonic"),
+                                            "value": point.get("asInt", point.get("asDouble")),
+                                            "time_unix_nano": point.get("timeUnixNano"),
+                                            "attributes": {
+                                                attribute["key"]: attribute.get("value")
+                                                for attribute in point.get("attributes", [])
+                                            },
+                                        }
+                                    )
         return {
             "sampled_records": sampled,
             "fields": sorted(fields),
             "nested_fields": {name: sorted(values) for name, values in nested_fields.items()},
             "kinds": sorted(kinds)[:50],
             "metric_shapes": metric_shapes,
+            "network_samples": network_samples,
         }
 
 
