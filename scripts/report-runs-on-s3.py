@@ -8,17 +8,24 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
+from itertools import pairwise
 from pathlib import Path
+from typing import Any
 
 
 def objects_in(bucket: str, prefix: str) -> list[dict]:
-    result = subprocess.run(
-        ["aws", "s3api", "list-objects-v2", "--bucket", bucket, "--prefix", prefix, "--output", "json"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return json.loads(result.stdout).get("Contents", [])
+    objects = []
+    continuation = None
+    while True:
+        command = ["aws", "s3api", "list-objects-v2", "--bucket", bucket, "--prefix", prefix, "--output", "json", "--no-paginate"]
+        if continuation:
+            command.extend(["--continuation-token", continuation])
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        page = json.loads(result.stdout)
+        objects.extend(page.get("Contents", []))
+        continuation = page.get("NextContinuationToken")
+        if not continuation:
+            return objects
 
 
 def size_of(objects: list[dict]) -> int:
@@ -121,10 +128,10 @@ def network_usage(bucket: str, key: str) -> dict:
         ordered = sorted(values.items())
         if len(ordered) < 2:
             continue
-        transferred = sum(max(0, current[1] - previous[1]) for previous, current in zip(ordered, ordered[1:]))
+        transferred = sum(max(0, current[1] - previous[1]) for previous, current in pairwise(ordered))
         peak_mbps = max(
             8 * max(0, current[1] - previous[1]) / ((current[0] - previous[0]) / 1e9) / 1e6
-            for previous, current in zip(ordered, ordered[1:])
+            for previous, current in pairwise(ordered)
             if current[0] > previous[0]
         )
         devices.setdefault(device, {})[direction] = {
@@ -168,7 +175,7 @@ def main() -> int:
     bucket = os.environ.get("RUNS_ON_S3_BUCKET_CACHE", "")
     repo_prefix = os.environ.get("RUNS_ON_S3_CACHE_REPO_PREFIX", "")
     prefix = repo_prefix.rstrip("/") + "/" if repo_prefix else ""
-    report = {
+    report: dict[str, Any] = {
         "snapshot": sys.argv[1],
         "observed_at": datetime.now(timezone.utc).isoformat(),
         "run_id": run_id,
@@ -184,6 +191,19 @@ def main() -> int:
         Path(sys.argv[2]).write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps(report, indent=2))
         return 0
+
+    compiler_prefix = f"cache/sccache/benchmark-deno/r{run_id}-a"
+    try:
+        compiler_objects = objects_in(bucket, compiler_prefix)
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        report["compiler_status"] = "unavailable"
+    else:
+        report.update(
+            compiler_status="available",
+            compiler_prefix=compiler_prefix,
+            compiler_objects=len(compiler_objects),
+            compiler_bytes=size_of(compiler_objects),
+        )
 
     try:
         cache_objects = objects_in(bucket, prefix)
