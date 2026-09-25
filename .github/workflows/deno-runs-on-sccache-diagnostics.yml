@@ -8,6 +8,11 @@ permissions:
   actions: write
   id-token: write
 
+concurrency:
+  group: deno-runs-on-rolling11
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   diagnose:
     uses: ./.github/workflows/deno-runs-on-phase.yml

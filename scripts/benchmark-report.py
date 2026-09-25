@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -23,7 +24,7 @@ PRODUCT_REF_FIELDS = (
 
 PROVIDER_LABELS = {
     "actions-cache": "GitHub Actions",
-    "runs-on-cache": "RunsOn Magic Cache",
+    "runs-on-cache": "RunsOn",
     "boringcache": "BoringCache",
     "boringcache-mountcache": "BoringCache mountcache",
     "boringcache-native": "BoringCache native",
@@ -91,6 +92,7 @@ def parse_args() -> argparse.Namespace:
     summarize.add_argument("--output-dir", default="benchmark-results")
     summarize.add_argument("--baseline-strategy", default=BASELINE_STRATEGY)
     summarize.add_argument("--no-deltas", action="store_true")
+    summarize.add_argument("--jobs-json", help="Completed GitHub job data, including post steps")
 
     return parser.parse_args()
 
@@ -381,7 +383,8 @@ def write_phase(args: argparse.Namespace) -> int:
     evidence = load_evidence(args.evidence)
     compiler_evidence = load_evidence(args.cache_evidence)
     identity = phase_cache_identity(args, evidence)
-    measured_storage = storage_sample(args, identity)
+    # Comparison evidence is captured before the Cargo Action's post-step save.
+    measured_storage = None if compiler_evidence else storage_sample(args, identity)
     total_seconds = args.restore_or_setup_seconds + args.build_seconds
 
     payload = {
@@ -413,6 +416,8 @@ def write_phase(args: argparse.Namespace) -> int:
             "dependency_archive_hit": compiler_evidence.get("dependency_archive_hit") if compiler_evidence else None,
             "compiler_backend": compiler_evidence.get("compiler_backend") if compiler_evidence else None,
             "compiler_sessions": compiler_evidence.get("compiler_sessions") if compiler_evidence else None,
+            "cache_variant": compiler_evidence.get("cache_variant") if compiler_evidence else None,
+            "timestamp_preparation": compiler_evidence.get("timestamp_preparation") if compiler_evidence else None,
         },
         "source": {
             "repository": args.source_repository or None,
@@ -440,6 +445,45 @@ def load_phases(input_dir: Path) -> list[dict[str, Any]]:
         if payload.get("schema_version") == SCHEMA_VERSION and payload.get("phase"):
             payloads.append(payload)
     return payloads
+
+
+def apply_completed_job_timings(phases: list[dict[str, Any]], jobs_path: str) -> None:
+    pages = json.loads(Path(jobs_path).read_text())
+    jobs = [job for page in pages for job in page["jobs"]]
+
+    def elapsed(item: dict[str, Any]) -> int:
+        return int((datetime.fromisoformat(item["completed_at"]) - datetime.fromisoformat(item["started_at"])).total_seconds())
+
+    for phase in phases:
+        provider = phase["strategy"]
+        variant = phase.get("variant") or ""
+        if variant:
+            prefix = f"{variant.removesuffix('-warm')} ({provider}) / "
+            matches = [job for job in jobs if job["name"].startswith(prefix)]
+        else:
+            suffix = f" / {provider} {phase['phase']}"
+            matches = [job for job in jobs if job["name"].endswith(suffix)]
+        if len(matches) != 1 or matches[0]["conclusion"] != "success":
+            raise ValueError(f"Expected one successful completed job for {provider} {variant or phase['phase']}")
+        job = matches[0]
+        steps = {step["name"]: step for step in job["steps"] if step["conclusion"] == "success"}
+        primary = steps["Build Deno release binaries"]
+        desktop = steps["Build denort_desktop"]
+        save_name = "Post Restore BoringCache for both Cargo commands" if provider == "boringcache" else "Save RunsOn Magic Cache"
+        save = steps.get(save_name)
+        if save is None and (provider == "boringcache" or phase["cache"].get("cache_variant") != "sccache-only"):
+            raise ValueError(f"Missing completed publication step for {provider} {variant or phase['phase']}")
+        setup = int((datetime.fromisoformat(primary["started_at"]) - datetime.fromisoformat(steps["Start the cache and build timer"]["started_at"])).total_seconds())
+        build = elapsed(primary) + elapsed(desktop)
+        publication = elapsed(save) if save else 0
+        phase["timing"] = {
+            "restore_or_setup_seconds": setup,
+            "build_seconds": build,
+            "save_seconds": publication,
+            "total_seconds": setup + build + publication,
+            "workflow_seconds": elapsed(job),
+            "source": "GitHub completed job and step timestamps",
+        }
 
 
 def merge_lane(benchmark: str, strategy: str, lane: str, phases: list[dict[str, Any]]) -> dict[str, Any]:
@@ -649,8 +693,8 @@ def render_benchmark(
 
         lines.append(f"{heading} {lane.capitalize()} lane")
         lines.append("")
-        lines.append("| Provider | Phase | Cache setup | Build | Cache + build | Workflow | Cache |")
-        lines.append("| --- | --- | ---: | ---: | ---: | ---: | --- |")
+        lines.append("| Provider | Phase | Cache setup | Build | Cache save | Cache + build | Workflow | Cache |")
+        lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |")
 
         for phase_name in LANE_PHASES[lane]:
             for strategy, variant in lane_providers:
@@ -672,6 +716,7 @@ def render_benchmark(
                     f"| {provider_label(strategy, variant)} | {PHASE_LABELS[phase_name]} "
                     f"| {format_seconds(timing['restore_or_setup_seconds'])} "
                     f"| {format_seconds(timing['build_seconds'])} "
+                    f"| {format_seconds(timing.get('save_seconds'))} "
                     f"| {format_seconds(timing['total_seconds'])} "
                     f"| {format_seconds(timing.get('workflow_seconds'))} "
                     f"| {cache_state(payload)} |"
@@ -719,6 +764,8 @@ def render_benchmark(
 
 def summarize(args: argparse.Namespace) -> int:
     phases = load_phases(Path(args.input_dir))
+    if args.jobs_json:
+        apply_completed_job_timings(phases, args.jobs_json)
     if not phases:
         raise SystemExit(f"no benchmark phase evidence found under {args.input_dir}")
 

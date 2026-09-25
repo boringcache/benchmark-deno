@@ -4,9 +4,9 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import subprocess
 import sys
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -76,16 +76,38 @@ def replace_command(config_path: Path, command: list[str]) -> None:
     config_path.write_text(updated)
 
 
+def select_job_lifecycle(config_path: Path) -> None:
+    original = config_path.read_text()
+    updated, replacements = re.subn(
+        r"^command\s*=\s*\[.*?^\]\n?",
+        "",
+        original,
+        count=1,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if replacements != 1:
+        raise ValueError(f"Expected one Cargo command in {config_path}")
+    config_path.write_text(updated)
+
+
 def main() -> int:
     if len(sys.argv) not in (2, 3):
         print(
-            "Usage: select-deno-cargo-phase.py primary|desktop [.boringcache.toml]",
+            "Usage: select-deno-cargo-phase.py primary|desktop|job [.boringcache.toml] or run primary|desktop",
             file=sys.stderr,
         )
         return 2
     config_path = Path(sys.argv[2]) if len(sys.argv) == 3 else ROOT / ".boringcache.toml"
     try:
+        if sys.argv[1] == "job":
+            select_job_lifecycle(config_path)
+            print("Selected Deno's Cargo job lifecycle.")
+            return 0
         settings = read_settings(ROOT / "scripts/deno-release-recipe.env")
+        if sys.argv[1] == "run":
+            if len(sys.argv) != 3:
+                raise ValueError("Expected a primary or desktop build phase")
+            return subprocess.run(cargo_command(settings, sys.argv[2]), cwd=ROOT / "upstream", check=False).returncode
         command = cargo_command(settings, sys.argv[1])
         replace_command(config_path, command)
     except (KeyError, OSError, ValueError) as error:

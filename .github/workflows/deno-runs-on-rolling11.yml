@@ -30,6 +30,7 @@ permissions:
 concurrency:
   group: deno-runs-on-rolling11
   cancel-in-progress: false
+  queue: max
 
 jobs:
   source:
@@ -271,6 +272,12 @@ jobs:
         with:
           pattern: phase-deno-runson-*-step*
           path: phase-evidence
+      - name: Read completed job timings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p benchmark-results
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > benchmark-results/job-timings.json
       - name: Summarize the rolling sequence
         run: |
           python3 ./scripts/benchmark-report.py summarize \
@@ -278,6 +285,7 @@ jobs:
             --baseline-strategy runs-on-cache \
             --no-deltas \
             --input-dir phase-evidence \
+            --jobs-json benchmark-results/job-timings.json \
             --output-dir benchmark-results
       - uses: actions/upload-artifact@v6
         with:
