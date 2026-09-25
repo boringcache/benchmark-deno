@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,6 +23,41 @@ def objects_in(bucket: str, prefix: str) -> list[dict]:
 
 def size_of(objects: list[dict]) -> int:
     return sum(item["Size"] for item in objects)
+
+
+def metrics_shape(bucket: str, key: str) -> dict:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "metrics.jsonl"
+        subprocess.run(
+            ["aws", "s3api", "get-object", "--bucket", bucket, "--key", key, str(path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        fields: set[str] = set()
+        nested_fields: dict[str, set[str]] = {}
+        kinds: set[str] = set()
+        sampled = 0
+        with path.open() as source:
+            for line in source:
+                if sampled == 500:
+                    break
+                record = json.loads(line)
+                if not isinstance(record, dict):
+                    continue
+                sampled += 1
+                fields.update(record)
+                for name, value in record.items():
+                    if isinstance(value, dict):
+                        nested_fields.setdefault(name, set()).update(value)
+                    elif name in ("name", "metric", "type") and isinstance(value, str):
+                        kinds.add(value)
+        return {
+            "sampled_records": sampled,
+            "fields": sorted(fields),
+            "nested_fields": {name: sorted(values) for name, values in nested_fields.items()},
+            "kinds": sorted(kinds)[:50],
+        }
 
 
 def main() -> int:
@@ -76,6 +112,18 @@ def main() -> int:
             metrics_objects=len(metric_objects),
             metrics_bytes=size_of(metric_objects),
         )
+        if metric_objects:
+            try:
+                report["metrics_shape"] = metrics_shape(bucket, metric_objects[0]["Key"])
+            except (OSError, subprocess.CalledProcessError, ValueError):
+                report["metrics_shape_status"] = "unavailable"
+
+    try:
+        cache_tree = objects_in(bucket, "cache/")
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        report["cache_tree_status"] = "unavailable"
+    else:
+        report.update(cache_tree_status="available", cache_tree_objects=len(cache_tree), cache_tree_bytes=size_of(cache_tree))
 
     try:
         bucket_objects = objects_in(bucket, "")
