@@ -84,6 +84,81 @@ def metrics_shape(bucket: str, key: str) -> dict:
         }
 
 
+def network_usage(bucket: str, key: str) -> dict:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "metrics.jsonl"
+        subprocess.run(
+            ["aws", "s3api", "get-object", "--bucket", bucket, "--key", key, str(path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        samples: dict[tuple[str, str], dict[int, int]] = {}
+        with path.open() as source:
+            for line in source:
+                record = json.loads(line)
+                for resource in record.get("resourceMetrics", []):
+                    for scope in resource.get("scopeMetrics", []):
+                        for metric in scope.get("metrics", []):
+                            if metric.get("name") != "system.network.io":
+                                continue
+                            for point in metric.get("sum", {}).get("dataPoints", []):
+                                attributes = {
+                                    attribute["key"]: attribute.get("value", {}).get("stringValue")
+                                    for attribute in point.get("attributes", [])
+                                }
+                                device = attributes.get("device")
+                                direction = attributes.get("direction")
+                                if not device or direction not in ("receive", "transmit"):
+                                    continue
+                                value = point.get("asInt", point.get("asDouble"))
+                                if value is None:
+                                    continue
+                                samples.setdefault((device, direction), {})[int(point["timeUnixNano"])] = int(value)
+
+    devices: dict[str, dict[str, dict]] = {}
+    for (device, direction), values in samples.items():
+        ordered = sorted(values.items())
+        if len(ordered) < 2:
+            continue
+        transferred = sum(max(0, current[1] - previous[1]) for previous, current in zip(ordered, ordered[1:]))
+        peak_mbps = max(
+            8 * max(0, current[1] - previous[1]) / ((current[0] - previous[0]) / 1e9) / 1e6
+            for previous, current in zip(ordered, ordered[1:])
+            if current[0] > previous[0]
+        )
+        devices.setdefault(device, {})[direction] = {
+            "bytes": transferred,
+            "peak_sample_mbps": round(peak_mbps, 1),
+            "first_time_unix_nano": ordered[0][0],
+            "last_time_unix_nano": ordered[-1][0],
+        }
+
+    if not devices:
+        return {"instance_id": key.split("/")[-2], "status": "no_network_samples"}
+    primary = max(
+        devices,
+        key=lambda device: sum(values["bytes"] for values in devices[device].values()),
+    )
+    directions = devices[primary]
+    start = min(values["first_time_unix_nano"] for values in directions.values())
+    end = max(values["last_time_unix_nano"] for values in directions.values())
+    seconds = (end - start) / 1e9
+    received = directions.get("receive", {}).get("bytes", 0)
+    transmitted = directions.get("transmit", {}).get("bytes", 0)
+    return {
+        "instance_id": key.split("/")[-2],
+        "status": "available",
+        "device": primary,
+        "observed_seconds": round(seconds, 1),
+        "receive_bytes": received,
+        "transmit_bytes": transmitted,
+        "average_total_mbps": round(8 * (received + transmitted) / seconds / 1e6, 1) if seconds else None,
+        "peak_receive_sample_mbps": directions.get("receive", {}).get("peak_sample_mbps"),
+        "peak_transmit_sample_mbps": directions.get("transmit", {}).get("peak_sample_mbps"),
+    }
+
+
 def main() -> int:
     if len(sys.argv) != 3 or sys.argv[1] not in ("before", "after"):
         print("Usage: report-runs-on-s3.py before|after OUTPUT.json", file=sys.stderr)
@@ -141,6 +216,13 @@ def main() -> int:
                 report["metrics_shape"] = metrics_shape(bucket, metric_objects[0]["Key"])
             except (OSError, subprocess.CalledProcessError, ValueError):
                 report["metrics_shape_status"] = "unavailable"
+            network_jobs = []
+            for item in metric_objects:
+                try:
+                    network_jobs.append(network_usage(bucket, item["Key"]))
+                except (OSError, subprocess.CalledProcessError, ValueError):
+                    network_jobs.append({"instance_id": item["Key"].split("/")[-2], "status": "unavailable"})
+            report["network_jobs"] = network_jobs
 
     try:
         cache_tree = objects_in(bucket, "cache/")
