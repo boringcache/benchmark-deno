@@ -16,11 +16,6 @@ on:
         type: choice
         options: ["5", "10"]
         default: "10"
-      wait_for_run_id:
-        description: Optional prior benchmark run that must finish successfully first.
-        required: false
-        type: string
-        default: ""
       cli_version:
         description: Optional exact BoringCache CLI release tag.
         required: false
@@ -33,39 +28,12 @@ permissions:
   id-token: write
 
 concurrency:
-  group: deno-runs-on-rolling-${{ inputs.cache_variant }}
+  group: deno-runs-on-rolling11
   cancel-in-progress: false
 
 jobs:
-  wait:
-    name: Wait for the preceding comparison
-    runs-on: ubuntu-24.04
-    timeout-minutes: 360
-    steps:
-      - name: Wait for the preceding run
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PREVIOUS_RUN_ID: ${{ inputs.wait_for_run_id }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$PREVIOUS_RUN_ID" ]]; then
-            exit 0
-          fi
-          test "$PREVIOUS_RUN_ID" != "$GITHUB_RUN_ID"
-          while true; do
-            status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREVIOUS_RUN_ID" --jq .status)"
-            if [[ "$status" == completed ]]; then
-              conclusion="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREVIOUS_RUN_ID" --jq .conclusion)"
-              test "$conclusion" = success
-              exit 0
-            fi
-            echo "Run $PREVIOUS_RUN_ID is $status; checking again in 30 seconds."
-            sleep 30
-          done
-
   source:
     name: Resolve first-parent source commits
-    needs: wait
     runs-on: ubuntu-24.04
     outputs:
       shas: ${{ steps.commits.outputs.shas }}
@@ -89,7 +57,6 @@ jobs:
 
   bucket-before:
     name: Inspect RunsOn cache bucket before builds
-    needs: wait
     runs-on: ${{ format('runs-on={0}/cpu=16/ram=64/family=m7i.*+m7a/image=ubuntu24-full-x64/volume=300gb:gp3/env=benchmark/region=us-east-1/spot=false/extras=s3-cache', github.run_id) }}
     steps:
       - uses: runs-on/action@efac073ea2507ec18797de3a81704201ade11d9d # v2.3.1
