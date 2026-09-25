@@ -132,7 +132,6 @@ jobs:
           python3 ./scripts/select-deno-cargo-profile.py "$profile"
           scope="r$GITHUB_RUN_ID-a$GITHUB_RUN_ATTEMPT"
           if [[ -n "$ROLLING_STEP" ]]; then
-            test "$CACHE_VARIANT" = sccache-only
             scope="$scope-roll11"
           fi
           ./scripts/scope-boringcache-run.sh "$scope" "$profile"
@@ -145,6 +144,8 @@ jobs:
           PHASE: ${{ inputs.phase }}
           BASE_SHA: ${{ steps.source.outputs.DENO_BASE_SHA }}
           HEAD_SHA: ${{ steps.source.outputs.DENO_HEAD_SHA }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          EXPECTED_PARENT: ${{ inputs.expected_parent }}
         run: |
           set -euo pipefail
           test ! -e upstream/target
@@ -154,12 +155,15 @@ jobs:
           test -d "$std_source"
           find "$std_source" -type f -exec touch -d '@946684800' {} +
           if [[ "$PHASE" == source_change ]]; then
-            test "$(git -C upstream rev-parse HEAD)" = "$HEAD_SHA"
-            test "$(git -C upstream rev-parse HEAD^)" = "$BASE_SHA"
+            current="${SOURCE_SHA:-$HEAD_SHA}"
+            parent="${EXPECTED_PARENT:-$BASE_SHA}"
+            test "$(git -C upstream rev-parse HEAD)" = "$current"
+            test "$(git -C upstream rev-parse HEAD^)" = "$parent"
             while IFS= read -r -d '' changed; do
-              test -f "upstream/$changed"
-              touch "upstream/$changed"
-            done < <(git -C upstream diff --name-only -z "$BASE_SHA" "$HEAD_SHA")
+              if [[ -f "upstream/$changed" ]]; then
+                touch "upstream/$changed"
+              fi
+            done < <(git -C upstream diff --name-only -z "$parent" "$current")
           fi
           test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
       - name: Start the cache and build timer
