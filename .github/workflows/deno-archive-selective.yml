@@ -1,17 +1,24 @@
-name: "Deno archive selective saves"
-run-name: ${{ format('Deno archive selective | CLI {0}', inputs.cli_version || 'Action default') }}
+name: "Deno archive rolling saves"
+run-name: ${{ format('Deno archive {0} | three commits | CLI {1}', inputs.archive_format, inputs.cli_version || 'Action default') }}
 
 on:
   workflow_dispatch:
     inputs:
       cli_version:
-        description: Exact immutable BoringCache CLI release tag.
-        required: false
+        description: Optional exact immutable BoringCache CLI release tag.
+        type: string
+        default: ""
+      archive_format:
+        description: Archive format for every seed and commit save.
+        type: choice
+        options: [v3, v2]
+        default: v3
+      head_sha:
+        description: Exact final source commit; its three first-parent predecessors form the chain.
         type: string
         default: ""
       runner_label:
         description: Optional runner label for a manual main-branch experiment.
-        required: false
         type: string
         default: ""
 
@@ -19,49 +26,103 @@ permissions:
   actions: read
   contents: read
 
+concurrency:
+  group: archive-rolling-${{ github.workflow }}-${{ inputs.archive_format }}
+  cancel-in-progress: false
+
 env:
   BORINGCACHE_ARCHIVE_GRAPH_WRITES: "1"
-  BORINGCACHE_ARCHIVE_SELECTIVE_READS: "1"
+  BORINGCACHE_ARCHIVE_SELECTIVE_READS: ${{ inputs.archive_format == 'v3' && '1' || '0' }}
   BORINGCACHE_ARCHIVE_SELECTIVE_VERIFY: "0"
-  CACHE_SCOPE: selective-r${{ github.run_id }}-a${{ github.run_attempt }}
+  CACHE_SCOPE: rolling-${{ inputs.archive_format }}-r${{ github.run_id }}-a${{ github.run_attempt }}
   CACHE_PROFILE: cargo-product
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
   RUST_LIB_BACKTRACE: 0
 
 jobs:
-  publish-base:
-    name: BoringCache Deno selective seed
+  source:
+    name: Resolve Deno source chain
     if: inputs.runner_label == '' || github.ref_name == 'main'
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-24.04' }}
-    timeout-minutes: 240
+    runs-on: ubuntu-24.04
     outputs:
-      base_sha: ${{ steps.source.outputs.DENO_BASE_SHA }}
-      head_sha: ${{ steps.source.outputs.DENO_HEAD_SHA }}
+      repository: ${{ steps.pin.outputs.repository }}
+      seed_parent: ${{ steps.chain.outputs.seed_parent }}
+      seed: ${{ steps.chain.outputs.seed }}
+      commit1: ${{ steps.chain.outputs.commit1 }}
+      commit2: ${{ steps.chain.outputs.commit2 }}
+      commit3: ${{ steps.chain.outputs.commit3 }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read the source pin
+        id: pin
+        env:
+          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+        run: |
+          set -euo pipefail
+          source benchmark-source.env
+          source_sha="${INPUT_HEAD_SHA:-$DENO_HEAD_SHA}"
+          echo "repository=$DENO_SOURCE_REPOSITORY" >> "$GITHUB_OUTPUT"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "head_sha=$source_sha" >> "$GITHUB_OUTPUT"
+      - name: Checkout the source history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.pin.outputs.repository }}
+          ref: ${{ steps.pin.outputs.head_sha }}
+          path: source-chain
+          fetch-depth: 5
+          persist-credentials: false
+      - name: Resolve three first-parent commits
+        id: chain
+        working-directory: source-chain
+        run: |
+          set -euo pipefail
+          for item in seed_parent:4 seed:3 commit1:2 commit2:1 commit3:0; do
+            key="${item%:*}"
+            depth="${item#*:}"
+            sha="$(git rev-parse "HEAD~$depth")"
+            echo "$key=$sha" >> "$GITHUB_OUTPUT"
+            echo "$key: $sha" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  seed:
+    name: BoringCache Deno seed
+    needs: source
+    runs-on: ${{ github.ref_name == 'main' && inputs.runner_label || 'ubuntu-24.04' }}
+    timeout-minutes: 240
+    env:
+      PHASE: seed
+      SOURCE_SHA: ${{ needs.source.outputs.seed }}
+      PARENT_SHA: ${{ needs.source.outputs.seed_parent }}
+    steps: &build_steps
       - name: Configure git
         run: |
           git config --global core.symlinks true
           git config --global fetch.parallel 32
 
       - name: Checkout benchmark repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Read pinned source
         id: source
         run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
 
-      - name: Checkout pinned Deno base
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Checkout selected Deno commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
-          ref: ${{ steps.source.outputs.DENO_BASE_SHA }}
+          ref: ${{ env.SOURCE_SHA }}
           path: upstream
           fetch-depth: 5
           submodules: false
 
-      - name: Prepare base source
-        run: ./scripts/prepare-source.sh base
+      - name: Prepare adjacent source
+        run: |
+          sed -i "s/^DENO_BASE_SHA=.*/DENO_BASE_SHA=$PARENT_SHA/; s/^DENO_HEAD_SHA=.*/DENO_HEAD_SHA=$SOURCE_SHA/" benchmark-source.env
+          ./scripts/prepare-source.sh head
 
       - name: Clone submodule ./tests/util/std
         run: git -C upstream submodule update --init --recursive --depth=1 -- ./tests/util/std
@@ -108,7 +169,7 @@ jobs:
       - name: Select Cargo cache layers
         run: python3 ./scripts/select-deno-cargo-profile.py "$CACHE_PROFILE"
 
-      - name: Scope the fresh Cargo product cohort
+      - name: Scope this archive comparison
         run: ./scripts/scope-boringcache-run.sh "$CACHE_SCOPE" "$CACHE_PROFILE"
 
       - name: Configure canary build
@@ -125,12 +186,32 @@ jobs:
       - name: Report disk before release build
         run: df -h
 
+      - name: Require clean source before caching
+        run: test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
+
+      - name: Require a published target before the commit build
+        if: env.PHASE != 'seed'
+        uses: boringcache/one@f0fb9b2d926a32b10c543e92093ba00c5a291b79 # v1 / 1.33.0
+        with:
+          cli-version: ${{ inputs.cli_version }}
+          trust-policy: restore
+          setup: none
+          mode: cargo
+          lookup-only: true
+          fail-on-cache-miss: true
+          working-directory: upstream
+          fail-on-cache-error: true
+        env:
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          DENO_SNAPSHOT_MINIFY_SOURCES: "1"
+
       - name: Build Deno release binaries through boringcache cargo
         id: build_primary
         uses: boringcache/one@f0fb9b2d926a32b10c543e92093ba00c5a291b79 # v1 / 1.33.0
         with:
           cli-version: ${{ inputs.cli_version }}
           trust-policy: publish
+          setup: none
           mode: cargo
           working-directory: upstream
           fail-on-cache-error: true
@@ -148,6 +229,7 @@ jobs:
         with:
           cli-version: ${{ inputs.cli_version }}
           trust-policy: publish
+          setup: none
           mode: cargo
           working-directory: upstream
           fail-on-cache-error: true
@@ -159,7 +241,7 @@ jobs:
       - name: Report disk after release build
         run: df -h
 
-      - name: Verify the Deno base build
+      - name: Verify the Deno build
         run: |
           set -euo pipefail
           test -x upstream/target/release/deno
@@ -167,171 +249,46 @@ jobs:
           test -x upstream/target/release/test_server
           test -s upstream/target/release/libdenort.so
           test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
-          cp "${{ steps.build_primary.outputs.evidence-path }}" /tmp/deno-base-primary-action.json
-          cp "${{ steps.build_desktop.outputs.evidence-path }}" /tmp/deno-base-desktop-action.json
 
-      - name: Upload base evidence
-        uses: actions/upload-artifact@v6
+      - name: Upload product evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: deno-selective-product-base
-          path: /tmp/deno-base-*.json
+          name: deno-archive-${{ inputs.archive_format }}-${{ env.PHASE }}
+          path: |
+            ${{ steps.build_primary.outputs.evidence-path }}
+            ${{ steps.build_desktop.outputs.evidence-path }}
           if-no-files-found: error
 
-  consume-head:
-    name: BoringCache Deno selective commit
-    needs: publish-base
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-24.04' }}
+  commit1:
+    name: BoringCache Deno commit 1
+    needs: [source, seed]
+    runs-on: ${{ github.ref_name == 'main' && inputs.runner_label || 'ubuntu-24.04' }}
     timeout-minutes: 240
-    steps:
-      - name: Configure git
-        run: |
-          git config --global core.symlinks true
-          git config --global fetch.parallel 32
+    env:
+      PHASE: commit1
+      SOURCE_SHA: ${{ needs.source.outputs.commit1 }}
+      PARENT_SHA: ${{ needs.source.outputs.seed }}
+    steps: *build_steps
 
-      - name: Checkout benchmark repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+  commit2:
+    name: BoringCache Deno commit 2
+    needs: [source, commit1]
+    runs-on: ${{ github.ref_name == 'main' && inputs.runner_label || 'ubuntu-24.04' }}
+    timeout-minutes: 240
+    env:
+      PHASE: commit2
+      SOURCE_SHA: ${{ needs.source.outputs.commit2 }}
+      PARENT_SHA: ${{ needs.source.outputs.commit1 }}
+    steps: *build_steps
 
-      - name: Read pinned source
-        id: source
-        run: sed '/^$/d' benchmark-source.env >> "$GITHUB_OUTPUT"
-
-      - name: Checkout pinned Deno head
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          repository: ${{ steps.source.outputs.DENO_SOURCE_REPOSITORY }}
-          ref: ${{ needs.publish-base.outputs.head_sha }}
-          path: upstream
-          fetch-depth: 5
-          submodules: false
-
-      - name: Prepare adjacent head source
-        run: |
-          ./scripts/prepare-source.sh head
-          test "$(git -C upstream rev-parse HEAD^)" = "${{ needs.publish-base.outputs.base_sha }}"
-
-      - name: Clone submodule ./tests/util/std
-        run: git -C upstream submodule update --init --recursive --depth=1 -- ./tests/util/std
-
-      - name: Verify Deno Linux release recipe
-        run: ./scripts/verify-deno-release-recipe.py upstream
-
-      - name: Install Deno snapshot minifier runtime
-        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
-        with:
-          deno-version: v2.x
-
-      - name: Pre-install rustup 1.28.2 (workaround broken 1.29.0)
-        run: ./scripts/preinstall-deno-rustup.sh
-
-      - name: Expose Deno's pinned toolchain file
-        run: ln -s upstream/rust-toolchain.toml rust-toolchain.toml
-
-      - uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-        with:
-          version: v0.17.0
-
-      - name: Log versions
-        run: |
-          echo '*** Python'
-          command -v python && python --version || echo 'No python found or bad executable'
-          echo '*** Rust'
-          command -v rustc && rustc --version || echo 'No rustc found or bad executable'
-          echo '*** Cargo'
-          command -v cargo && cargo --version || echo 'No cargo found or bad executable'
-          echo '*** Deno'
-          command -v deno && deno --version || echo 'No deno found or bad executable'
-          echo '*** Node'
-          command -v node && node --version || echo 'No node found or bad executable'
-          echo '*** Installed packages'
-          command -v dpkg && dpkg -l || echo 'No dpkg found or bad executable'
-
-      - name: Configure Deno Linux build environment
-        run: ./scripts/setup-deno-linux.sh
-
-      - name: Select Cargo cache layers
-        run: python3 ./scripts/select-deno-cargo-profile.py "$CACHE_PROFILE"
-
-      - name: Scope the base Cargo product cohort
-        run: ./scripts/scope-boringcache-run.sh "$CACHE_SCOPE" "$CACHE_PROFILE"
-
-      - name: Configure canary build
-        run: echo "DENO_CANARY=true" >> "$GITHUB_ENV"
-
-      - name: Configure frame-pointer panic traces
-        run: ./scripts/configure-deno-frame-pointers.sh
-
-      - name: Require an empty destination
-        run: |
-          test ! -e upstream/target
-          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
-
-      - name: Report disk before release build
-        run: df -h
-
-      - name: Restore and build Deno release binaries through boringcache cargo
-        id: build_primary
-        uses: boringcache/one@f0fb9b2d926a32b10c543e92093ba00c5a291b79 # v1 / 1.33.0
-        with:
-          cli-version: ${{ inputs.cli_version }}
-          trust-policy: publish
-          mode: cargo
-          working-directory: upstream
-          fail-on-cache-error: true
-        env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
-          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-          DENO_SNAPSHOT_MINIFY_SOURCES: "1"
-
-      - name: Select Deno's denort_desktop release command
-        run: ./scripts/select-deno-cargo-phase.py desktop
-
-      - name: Build denort_desktop through boringcache cargo
-        id: build_desktop
-        uses: boringcache/one@f0fb9b2d926a32b10c543e92093ba00c5a291b79 # v1 / 1.33.0
-        with:
-          cli-version: ${{ inputs.cli_version }}
-          trust-policy: publish
-          mode: cargo
-          working-directory: upstream
-          fail-on-cache-error: true
-        env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
-          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-          DENO_SNAPSHOT_MINIFY_SOURCES: "1"
-
-      - name: Report disk after release build
-        run: df -h
-
-      - name: Verify the Deno head build
-        run: |
-          set -euo pipefail
-          test -x upstream/target/release/deno
-          test -x upstream/target/release/denort
-          test -x upstream/target/release/test_server
-          test -s upstream/target/release/libdenort.so
-          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
-          cp "${{ steps.build_primary.outputs.evidence-path }}" /tmp/deno-head-primary-action.json
-          cp "${{ steps.build_desktop.outputs.evidence-path }}" /tmp/deno-head-desktop-action.json
-
-      - name: Publish product summary
-        run: |
-          {
-            echo "## Deno archive selective saves"
-            echo "- Cache profile: ${CACHE_PROFILE}"
-            echo "- Base cache scope: ${CACHE_SCOPE}"
-            echo
-            echo "- CLI override: \`${{ inputs.cli_version || 'Action default' }}\`"
-            echo "- Source: \`${{ needs.publish-base.outputs.base_sha }}\` → \`${{ needs.publish-base.outputs.head_sha }}\`"
-            echo "- Primary target available before the adjacent build: \`${{ steps.build_primary.outputs.cache-hit }}\`"
-            echo "- Desktop target available before the adjacent build: \`${{ steps.build_desktop.outputs.cache-hit }}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload head evidence
-        uses: actions/upload-artifact@v6
-        with:
-          name: deno-selective-product-head
-          path: /tmp/deno-head-*.json
-          if-no-files-found: error
+  commit3:
+    name: BoringCache Deno commit 3
+    needs: [source, commit2]
+    runs-on: ${{ github.ref_name == 'main' && inputs.runner_label || 'ubuntu-24.04' }}
+    timeout-minutes: 240
+    env:
+      PHASE: commit3
+      SOURCE_SHA: ${{ needs.source.outputs.commit3 }}
+      PARENT_SHA: ${{ needs.source.outputs.commit2 }}
+    steps: *build_steps
