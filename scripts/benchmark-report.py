@@ -5,7 +5,6 @@ import argparse
 import json
 import os
 import subprocess
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -24,7 +23,6 @@ PRODUCT_REF_FIELDS = (
 
 PROVIDER_LABELS = {
     "actions-cache": "GitHub Actions",
-    "runs-on-cache": "RunsOn",
     "boringcache": "BoringCache",
     "boringcache-mountcache": "BoringCache mountcache",
     "boringcache-native": "BoringCache native",
@@ -41,21 +39,17 @@ CANDIDATE_STRATEGY = "boringcache"
 PHASE_LABELS = {
     "cold": "Cold build",
     "warm": "Warm build",
-    "source_change": "Changed-source build",
     "commit": "Commit build",
 }
 
 LANE_PHASES = {
-    "fresh": ("cold", "warm", "source_change"),
-    "target-sccache": ("cold", "warm", "source_change"),
-    "sccache-only": ("cold", "warm", "source_change"),
+    "fresh": ("cold", "warm"),
     "rolling": ("commit",),
 }
 
 PHASE_RUN_FIELDS = {
     "cold": ("cold_seconds", "cold_build_seconds", "cold_restore_or_setup_seconds"),
     "warm": ("warm1_seconds", "warm1_build_seconds", "warm1_restore_or_setup_seconds"),
-    "source_change": ("source_change_seconds", "source_change_build_seconds", "source_change_restore_or_setup_seconds"),
     "commit": ("rolling_first_build_seconds", None, None),
 }
 
@@ -83,16 +77,12 @@ def parse_args() -> argparse.Namespace:
     phase.add_argument("--source-repository", default="")
     phase.add_argument("--source-sha", default="")
     phase.add_argument("--evidence")
-    phase.add_argument("--cache-evidence")
     phase.add_argument("--output-dir", default="benchmark-results")
 
     summarize = subparsers.add_parser("summarize")
     summarize.add_argument("--title", required=True)
     summarize.add_argument("--input-dir", required=True)
     summarize.add_argument("--output-dir", default="benchmark-results")
-    summarize.add_argument("--baseline-strategy", default=BASELINE_STRATEGY)
-    summarize.add_argument("--no-deltas", action="store_true")
-    summarize.add_argument("--jobs-json", help="Completed GitHub job data, including post steps")
 
     return parser.parse_args()
 
@@ -381,10 +371,8 @@ def write_phase(args: argparse.Namespace) -> int:
     cache_hit = optional_bool(args.cache_hit)
     import_ready = optional_bool(args.cache_import_ready)
     evidence = load_evidence(args.evidence)
-    compiler_evidence = load_evidence(args.cache_evidence)
     identity = phase_cache_identity(args, evidence)
-    # Comparison evidence is captured before the Cargo Action's post-step save.
-    measured_storage = None if compiler_evidence else storage_sample(args, identity)
+    measured_storage = storage_sample(args, identity)
     total_seconds = args.restore_or_setup_seconds + args.build_seconds
 
     payload = {
@@ -412,12 +400,6 @@ def write_phase(args: argparse.Namespace) -> int:
             "storage_bytes": measured_storage["bytes"] if measured_storage else None,
             "storage_source": measured_storage["source"] if measured_storage else None,
             "storage_breakdown": measured_storage.get("breakdown") if measured_storage else None,
-            "target_restore_hit": compiler_evidence.get("target_restore_hit") if compiler_evidence else None,
-            "dependency_archive_hit": compiler_evidence.get("dependency_archive_hit") if compiler_evidence else None,
-            "compiler_backend": compiler_evidence.get("compiler_backend") if compiler_evidence else None,
-            "compiler_sessions": compiler_evidence.get("compiler_sessions") if compiler_evidence else None,
-            "cache_variant": compiler_evidence.get("cache_variant") if compiler_evidence else None,
-            "timestamp_preparation": compiler_evidence.get("timestamp_preparation") if compiler_evidence else None,
         },
         "source": {
             "repository": args.source_repository or None,
@@ -447,45 +429,6 @@ def load_phases(input_dir: Path) -> list[dict[str, Any]]:
     return payloads
 
 
-def apply_completed_job_timings(phases: list[dict[str, Any]], jobs_path: str) -> None:
-    pages = json.loads(Path(jobs_path).read_text())
-    jobs = [job for page in pages for job in page["jobs"]]
-
-    def elapsed(item: dict[str, Any]) -> int:
-        return int((datetime.fromisoformat(item["completed_at"]) - datetime.fromisoformat(item["started_at"])).total_seconds())
-
-    for phase in phases:
-        provider = phase["strategy"]
-        variant = phase.get("variant") or ""
-        if variant:
-            prefix = f"{variant.removesuffix('-warm')} ({provider}) / "
-            matches = [job for job in jobs if job["name"].startswith(prefix)]
-        else:
-            suffix = f" / {provider} {phase['phase']}"
-            matches = [job for job in jobs if job["name"].endswith(suffix)]
-        if len(matches) != 1 or matches[0]["conclusion"] != "success":
-            raise ValueError(f"Expected one successful completed job for {provider} {variant or phase['phase']}")
-        job = matches[0]
-        steps = {step["name"]: step for step in job["steps"] if step["conclusion"] == "success"}
-        primary = steps["Build Deno release binaries"]
-        desktop = steps["Build denort_desktop"]
-        save_name = "Post Restore BoringCache for both Cargo commands" if provider == "boringcache" else "Save RunsOn Magic Cache"
-        save = steps.get(save_name)
-        if save is None and (provider == "boringcache" or phase["cache"].get("cache_variant") != "sccache-only"):
-            raise ValueError(f"Missing completed publication step for {provider} {variant or phase['phase']}")
-        setup = int((datetime.fromisoformat(primary["started_at"]) - datetime.fromisoformat(steps["Start the cache and build timer"]["started_at"])).total_seconds())
-        build = elapsed(primary) + elapsed(desktop)
-        publication = elapsed(save) if save else 0
-        phase["timing"] = {
-            "restore_or_setup_seconds": setup,
-            "build_seconds": build,
-            "save_seconds": publication,
-            "total_seconds": setup + build + publication,
-            "workflow_seconds": elapsed(job),
-            "source": "GitHub completed job and step timestamps",
-        }
-
-
 def merge_lane(benchmark: str, strategy: str, lane: str, phases: list[dict[str, Any]]) -> dict[str, Any]:
     by_phase = {payload["phase"]: payload for payload in phases}
     runs: dict[str, Any] = {}
@@ -504,7 +447,7 @@ def merge_lane(benchmark: str, strategy: str, lane: str, phases: list[dict[str, 
             runs[setup_field] = timing["restore_or_setup_seconds"]
 
     warm = by_phase.get("warm")
-    reference = by_phase.get("source_change") or by_phase.get("commit") or by_phase.get("warm") or by_phase.get("cold")
+    reference = by_phase.get("commit") or by_phase.get("warm") or by_phase.get("cold")
     if reference is None:
         raise SystemExit(f"no usable phase evidence for {benchmark} {strategy} {lane}")
 
@@ -602,28 +545,7 @@ def cache_state(payload: dict[str, Any]) -> str:
     return "not reported"
 
 
-def compiler_counts(payload: dict[str, Any]) -> str:
-    sessions = payload.get("cache", {}).get("compiler_sessions") or []
-    if not sessions:
-        return "n/a"
-    parts = []
-    for session in sessions:
-        compiler = session.get("compiler") or {}
-        hits = compiler.get("cache_hits")
-        misses = compiler.get("cache_misses")
-        name = session.get("session", "session")
-        if hits is None or misses is None:
-            parts.append(f"{name}: unavailable")
-        elif hits + misses == 0:
-            parts.append(f"{name}: no cacheable lookups")
-        else:
-            errors = sum(compiler.get(key) or 0 for key in ("cache_read_errors", "cache_write_errors", "cache_timeouts"))
-            suffix = f", {errors} errors/timeouts" if errors else ""
-            parts.append(f"{name}: {hits} hits, {misses} misses{suffix}")
-    return "; ".join(parts)
-
-
-def render_markdown(title: str, lanes: dict[tuple[str, str, str, str], dict[str, Any]], phases: list[dict[str, Any]], baseline_strategy: str = BASELINE_STRATEGY, show_deltas: bool = True) -> str:
+def render_markdown(title: str, lanes: dict[tuple[str, str, str, str], dict[str, Any]], phases: list[dict[str, Any]]) -> str:
     lines = [f"## {title}", ""]
     benchmarks = sorted({payload["benchmark"] for payload in phases})
 
@@ -631,24 +553,11 @@ def render_markdown(title: str, lanes: dict[tuple[str, str, str, str], dict[str,
         if len(benchmarks) > 1:
             lines.append(f"### {benchmark}")
             lines.append("")
-        lines.extend(render_benchmark(benchmark, lanes, phases, depth=4 if len(benchmarks) > 1 else 3, baseline_strategy=baseline_strategy, show_deltas=show_deltas))
+        lines.extend(render_benchmark(benchmark, lanes, phases, depth=4 if len(benchmarks) > 1 else 3))
 
-    sources = {
-        (payload["phase"], payload.get("variant") or ""): payload["source"]
-        for payload in phases
-        if payload["source"].get("repository") and payload["source"].get("sha")
-    }
-    if sources:
-        if len({source["sha"] for source in sources.values()}) == 1:
-            source = next(iter(sources.values()))
-            lines.append(f"Source: `{source['repository']}@{source['sha'][:7]}`")
-        elif any(variant for _, variant in sources):
-            for (_, variant), source in sorted(sources.items(), key=lambda item: item[0][1]):
-                lines.append(f"{variant} source: `{source['repository']}@{source['sha'][:7]}`")
-        else:
-            for phase_name in ("cold", "warm", "source_change", "commit"):
-                if source := sources.get((phase_name, "")):
-                    lines.append(f"{PHASE_LABELS[phase_name]} source: `{source['repository']}@{source['sha'][:7]}`")
+    source = next((payload["source"] for payload in phases if payload["source"].get("sha")), None)
+    if source and source.get("repository"):
+        lines.append(f"Source: `{source['repository']}@{source['sha'][:7]}`")
         lines.append("")
 
     return "\n".join(lines)
@@ -664,8 +573,6 @@ def render_benchmark(
     all_lanes: dict[tuple[str, str, str, str], dict[str, Any]],
     all_phases: list[dict[str, Any]],
     depth: int,
-    baseline_strategy: str,
-    show_deltas: bool,
 ) -> list[str]:
     lines: list[str] = []
     heading = "#" * depth
@@ -678,23 +585,21 @@ def render_benchmark(
     lane_names = sorted({lane for _, _, lane in lanes})
 
     for lane in lane_names:
-        baseline = lanes.get((baseline_strategy, "", lane))
+        baseline = lanes.get((BASELINE_STRATEGY, "", lane))
         candidate = lanes.get((CANDIDATE_STRATEGY, "", lane))
-        reference = candidate or baseline or next(
-            (value for (_, _, item), value in lanes.items() if item == lane), None
-        )
+        reference = candidate or baseline
         if reference is None:
             continue
 
         lane_providers = sorted(
             {(strategy, variant) for strategy, variant, item in lanes if item == lane},
-            key=lambda entry: (entry[1], entry[0] != baseline_strategy, entry[0] != CANDIDATE_STRATEGY),
+            key=lambda entry: (entry[0] != CANDIDATE_STRATEGY, entry[0] != BASELINE_STRATEGY, bool(entry[1]), entry),
         )
 
         lines.append(f"{heading} {lane.capitalize()} lane")
         lines.append("")
-        lines.append("| Provider | Phase | Cache setup | Build | Cache save | Cache + build | Workflow | Cache |")
-        lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |")
+        lines.append("| Provider | Phase | Cache setup | Build | Cache + build | Workflow | Cache |")
+        lines.append("| --- | --- | ---: | ---: | ---: | ---: | --- |")
 
         for phase_name in LANE_PHASES[lane]:
             for strategy, variant in lane_providers:
@@ -716,7 +621,6 @@ def render_benchmark(
                     f"| {provider_label(strategy, variant)} | {PHASE_LABELS[phase_name]} "
                     f"| {format_seconds(timing['restore_or_setup_seconds'])} "
                     f"| {format_seconds(timing['build_seconds'])} "
-                    f"| {format_seconds(timing.get('save_seconds'))} "
                     f"| {format_seconds(timing['total_seconds'])} "
                     f"| {format_seconds(timing.get('workflow_seconds'))} "
                     f"| {cache_state(payload)} |"
@@ -724,22 +628,7 @@ def render_benchmark(
 
         lines.append("")
 
-        if any(payload.get("cache", {}).get("compiler_sessions") is not None for payload in phases if payload["lane"] == lane):
-            lines.append("| Provider | Phase | Target restored | Dependency archive restored | Compiler cache |")
-            lines.append("| --- | --- | --- | --- | --- |")
-            for phase_name in LANE_PHASES[lane]:
-                for strategy, variant in lane_providers:
-                    payload = next((item for item in phases if item["strategy"] == strategy and (item.get("variant") or "") == variant and item["lane"] == lane and item["phase"] == phase_name), None)
-                    if payload is None:
-                        continue
-                    restored = payload["cache"].get("target_restore_hit")
-                    target_state = "yes" if restored is True else "no" if restored is False else "n/a"
-                    dependency_hit = payload["cache"].get("dependency_archive_hit")
-                    dependency_state = "yes" if dependency_hit is True else "no" if dependency_hit is False else "n/a"
-                    lines.append(f"| {provider_label(strategy, variant)} | {PHASE_LABELS[phase_name]} | {target_state} | {dependency_state} | {compiler_counts(payload)} |")
-            lines.append("")
-
-        if baseline and candidate and show_deltas:
+        if baseline and candidate:
             for phase_name in LANE_PHASES[lane]:
                 total_field = PHASE_RUN_FIELDS[phase_name][0]
                 before = baseline["runs"].get(total_field)
@@ -755,7 +644,7 @@ def render_benchmark(
                     continue
                 lines.append(
                     f"- {PHASE_LABELS[phase_name]}: {PROVIDER_LABELS[CANDIDATE_STRATEGY]} {format_seconds(after)} "
-                    f"vs {PROVIDER_LABELS[baseline_strategy]} {format_seconds(before)} — **{format_delta(before, after)}**"
+                    f"vs {PROVIDER_LABELS[BASELINE_STRATEGY]} {format_seconds(before)} — **{format_delta(before, after)}**"
                 )
             lines.append("")
 
@@ -764,21 +653,19 @@ def render_benchmark(
 
 def summarize(args: argparse.Namespace) -> int:
     phases = load_phases(Path(args.input_dir))
-    if args.jobs_json:
-        apply_completed_job_timings(phases, args.jobs_json)
     if not phases:
         raise SystemExit(f"no benchmark phase evidence found under {args.input_dir}")
 
-    source_shas: dict[tuple[str, str, str, str], set[str]] = {}
+    source_shas: dict[tuple[str, str], set[str]] = {}
     for phase in phases:
         source = phase.get("source") or {}
         sha = source.get("sha")
         if not sha:
             raise SystemExit(f"missing source SHA for {phase['benchmark']} {phase['strategy']}")
-        source_shas.setdefault((phase["benchmark"], phase["lane"], phase["phase"], phase.get("variant") or ""), set()).add(sha)
-    for (benchmark, lane, phase_name, variant), shas in source_shas.items():
+        source_shas.setdefault((phase["benchmark"], phase["lane"]), set()).add(sha)
+    for (benchmark, lane), shas in source_shas.items():
         if len(shas) != 1:
-            raise SystemExit(f"mixed source SHAs for {benchmark} {lane} {phase_name} {variant}: {', '.join(sorted(shas))}")
+            raise SystemExit(f"mixed source SHAs for {benchmark} {lane}: {', '.join(sorted(shas))}")
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -798,7 +685,7 @@ def summarize(args: argparse.Namespace) -> int:
         output_path.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n")
         print(output_path)
 
-    markdown = render_markdown(args.title, lanes, phases, args.baseline_strategy, not args.no_deltas)
+    markdown = render_markdown(args.title, lanes, phases)
     (output_dir / "comparison.md").write_text(markdown)
 
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
